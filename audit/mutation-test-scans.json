@@ -1,0 +1,25 @@
+[
+  {
+    "timestamp": "2026-09-21T18:05:00Z",
+    "commit": "634fec5806f63e5a33779ecc34126e2fb7ef54b0",
+    "testsAfterCommit": "ccc66c9cb78c0ca85cffd81b3b228d9a0d3bd42b",
+    "publishedTag": null,
+    "commitsAheadOfTag": 0,
+    "scope": "whole repo (src/lib/LibLeakyBucket.sol: leak, levelAt, headroomAt, fillAt, fillableAt; src/lib/LibLeakyBucketCheckpoint.sol: pack, unpack, levelAt, headroomAt, fillableAt, fill; README and NatSpec as intent oracle)",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 43,
+      "mutantsKilledByPreExistingSuite": 42,
+      "mutantsSurvivedPreExistingSuite": 1,
+      "mutantsKilledAfter": 43,
+      "candidates": 2,
+      "confirmed": 2,
+      "testsBefore": 53,
+      "testsAfter": 54,
+      "coveragePRs": ["#3"],
+      "filed": ["#1", "#2"],
+      "notes": "Single survivor was LibLeakyBucketCheckpoint.fillableAt, never exercised with a stored checkpoint differing from the queried clock; the one embedding test reaching it calls it in the same second as the mint, where the substitution is a no-op. Behaviour correct as written, so closed by strengthening testPackedReadsMatchCore in place plus a concrete-second case. Both adversarial findings are in the packed codec and neither is reachable through a monotonic block.timestamp: #1 is a write-path violation of the documented 'never hands out more headroom than reality' property (a timestamp behind the stored checkpoint regresses it; measured 501 units of headroom where 1 was earned), #2 is headroomAt/fillableAt disagreeing with fill when capacity exceeds LEAKY_BUCKET_LEVEL_MAX (fails closed, wrong error). publishedTag is null: nothing is published yet, the next-v0.1.0 tag is an unconsumed version seed and the Soldeer project does not exist. testsAfterCommit is the head of the coverage branch, pending merge of PR #3."
+    }
+  }
+]
