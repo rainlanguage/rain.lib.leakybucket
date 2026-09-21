@@ -156,6 +156,15 @@ library LibLeakyBucket {
     /// the only one of the three that is conservative in the direction that
     /// matters: it can only ever report a level at or above the true level, so
     /// it can only ever hand out less headroom than reality, never more.
+    ///
+    /// That is a property of this read, and keeping it takes one thing of
+    /// whoever writes a result back: a stored checkpoint must never move
+    /// backwards. Crediting no leak for a backwards step and then recording the
+    /// earlier second leaves the same interval to be measured again on the next
+    /// read, which pays out exactly the headroom this saturation just refused.
+    /// `LibLeakyBucketCheckpoint.fill` keeps the later of the supplied time and
+    /// the stored one for that reason, and a caller pairing this function with
+    /// a checkpoint of its own owes the bucket the same.
     /// @param level The level recorded at the checkpoint.
     /// @param checkpoint The timestamp `level` was recorded at, in seconds.
     /// @param timestamp The timestamp to evaluate the bucket at, in seconds.
@@ -198,6 +207,14 @@ library LibLeakyBucket {
     /// on the next call and the cap would not hold. Write both back together,
     /// or use `LibLeakyBucketCheckpoint.fill`, which packs them into one word
     /// and makes writing one without the other impossible.
+    ///
+    /// The exception is a `timestamp` at or before `checkpoint`, where the
+    /// elapsed time saturates at zero and no leak is credited. The level
+    /// returned then belongs to `checkpoint` as much as to `timestamp`, and it
+    /// is `checkpoint` that must be stored: recording the earlier second lets
+    /// the next read measure an interval that has already been paid for and
+    /// hand out headroom nobody waited for. Store the later of the two. The
+    /// codec does exactly that, which is another reason to reach for it.
     ///
     /// An `amount` of zero is accepted whenever the bucket is at or over
     /// capacity as well as under it, because zero fits in zero headroom. It

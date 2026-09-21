@@ -38,7 +38,15 @@ contract LeakyBucketMintCap {
 
     /// Where governance goes. Left open here because the library has no opinion
     /// about it and the tests need to move the policy around freely.
+    ///
+    /// `checkCapacity` is the one thing a setter does owe the codec: a capacity
+    /// wider than the packed level field is a cap the codec cannot enforce, and
+    /// this is the only place it can be refused rather than merely detected.
+    /// The packed calls below refuse it too, so the check is belt and braces
+    /// rather than the enforcement, but refusing it here is what turns "the
+    /// mint reverted" into "the policy was never settable".
     function setPolicy(address minter, uint256 capacity, uint256 leakRate) external {
+        LibLeakyBucketCheckpoint.checkCapacity(capacity);
         sCapacity[minter] = capacity;
         sLeakRate[minter] = leakRate;
     }

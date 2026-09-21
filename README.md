@@ -95,6 +95,20 @@ Two properties make policy changes safe to land at an arbitrary moment:
 - **An unconfigured minter can mint nothing.** A zero capacity is a closed door,
   so forgetting to configure a minter fails closed.
 
+The one bound the codec does impose is an upper one, because it follows from the
+packing rather than from any policy view: a `capacity` above
+`LEAKY_BUCKET_LEVEL_MAX` is a cap the one word layout cannot enforce, and every
+packed call that takes a `capacity` reverts `LeakyBucketCapacityOverflow` rather
+than half enforcing it. `LibLeakyBucketCheckpoint.checkCapacity` is the same
+guard on its own, so a setter can refuse the policy at the moment it is set:
+
+```solidity
+function setCapacity(address minter, uint256 capacity) external onlyGovernance {
+    LibLeakyBucketCheckpoint.checkCapacity(capacity);
+    sCapacity[minter] = capacity;
+}
+```
+
 ### Reading without filling
 
 - `headroomAt` — what would fit right now.
@@ -102,6 +116,12 @@ Two properties make policy changes safe to land at an arbitrary moment:
 - `fillableAt` — the earliest second a given amount would fit, or
   `type(uint256).max` for never. A view for callers and frontends; nothing in
   the enforcement path consults it.
+
+`headroomAt` is exactly what `fill` takes: the amount it names always fits, and
+one unit more is always rejected. `fillableAt` names a second at which the fill
+it was asked about would be accepted. Neither answers at all for a `capacity`
+the codec cannot enforce, because any answer there would be a promise `fill`
+would break.
 
 ### The pure core
 
@@ -118,6 +138,14 @@ place credits the same leak again on the next call and the cap quietly stops
 binding. It is a one line mistake with no symptom until it is exploited. The
 codec returns the level and the timestamp as one word so there is no second
 write to forget.
+
+The other obligation a direct caller takes on is that **a stored checkpoint must
+never move backwards.** A fill at a time at or behind the stored checkpoint
+credits no leak, so the level it returns belongs to the checkpoint rather than
+to the supplied time; writing the earlier second back leaves an interval that
+has already been paid for to be measured again on the next read, which hands out
+headroom nobody waited for. Store the later of the two. The codec does that
+itself, so it is only a hazard for state held outside it.
 
 ## Design notes
 
@@ -177,10 +205,24 @@ it caught up; wrapping would empty the bucket outright. Crediting nothing can
 only ever report a level at or above the true level, so it can only ever hand
 out _less_ headroom than reality.
 
+The write path has to keep what the read path refuses. A fill at a backwards
+clock stores **the later of that clock and the stored checkpoint**, never the
+earlier: crediting no leak for the backwards step and then recording the earlier
+second leaves the same interval to be measured again on the next read, which
+pays out exactly the headroom the saturation just declined. That makes the
+property above hold end to end and not only on a read, and it is what a caller
+holding `(level, checkpoint)` outside the codec has to reproduce.
+
 The packed codec **reverts** rather than truncating on an oversized level or
 timestamp. A truncated time field reads as a checkpoint in the distant past,
 which is an enormous leak, which is a full bucket of headroom nobody waited for.
 Failing closed at an unreachable date beats failing open at a reachable one.
+
+It reverts on an unenforceable `capacity` for the same reason and with the same
+preference for failing loudly: a capacity above `LEAKY_BUCKET_LEVEL_MAX` permits
+a level the word cannot hold, so clamping it would enforce a policy nobody set
+and leaving it would have `headroomAt` name an amount `fill` refuses. Both are
+worse than refusing the parameter and saying which one it was.
 
 ### Storage layout
 
@@ -192,8 +234,12 @@ One word: the level in the high 192 bits, the timestamp in the low 64.
 | `timestamp` | 64 bits  | ~5.8e11 years                                  |
 
 `unpack` is total, so any word in the space reads as some valid bucket.
-Governance should reject a `capacity` above `LEAKY_BUCKET_LEVEL_MAX` when it is
-set, rather than discovering it at mint time.
+
+`LEAKY_BUCKET_LEVEL_MAX` is therefore the widest `capacity` the codec can
+enforce, and every packed call that takes a `capacity` rejects one above it with
+`LeakyBucketCapacityOverflow(capacity)`. Governance should reject it at the
+moment it is set as well, with `checkCapacity`, so the failure is a refused
+policy change rather than a refused mint.
 
 ## Gas
 
@@ -202,15 +248,20 @@ each figure so a compiler or EVM change that moves one fails the suite.
 
 | Path                              | Gas    |
 | --------------------------------- | ------ |
-| Steady state fill (non zero slot) | 8,845  |
-| First fill (zero slot)            | 23,433 |
-| Rejected fill                     | 8,122  |
+| Steady state fill (non zero slot) | 8,923  |
+| First fill (zero slot)            | 23,511 |
+| Rejected fill                     | 8,188  |
 
-Against the same bucket held in two slots instead of one: **2,025** saved on the
-extra cold `SLOAD` in the steady state, and **21,925** on the extra `SSTORE` for
+Against the same bucket held in two slots instead of one: **1,947** saved on the
+extra cold `SLOAD` in the steady state, and **21,847** on the extra `SSTORE` for
 a first fill. The two are measured separately because `forge` carries its dirty
 slot journal across from `setUp`, so a single steady state measurement cannot
 price the second `SSTORE`.
+
+The saving is the 2,100 of a cold `SLOAD` less the ~78 gas of the two guards the
+codec runs and a two slot layout has no reason to: the bound on a `capacity` the
+packed level field cannot hold, and the comparison that keeps the stored
+checkpoint from moving backwards.
 
 ## Why this exists
 
@@ -241,8 +292,12 @@ an audit should hold the implementation to are the ones fuzzed in
 - Exactly the reported headroom fits and one unit more does not.
 - Checkpointing changes nothing.
 - Every saturation goes the conservative way, per the table above.
+- A stored checkpoint never moves backwards, so a fill at a stale clock is not
+  observable at any later second.
 - The packed codec round trips, is total on `unpack`, does not alias its fields,
   and reverts rather than truncating.
+- The packed reads and `fill` agree at every input either will answer, and
+  refuse the same capacities.
 
 `test/lib/LibLeakyBucketSlow.sol` is the differential oracle: the same leak
 written as a one-second-at-a-time loop, which the closed form is checked
