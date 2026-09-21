@@ -216,11 +216,12 @@ contract LibLeakyBucketTest is Test {
         assertEq(LibLeakyBucket.fillAt(level, checkpoint, checkpoint + 85, capacity, leakRate, 10e18), 25e18);
     }
 
-    /// The bound the whole library exists to provide, on a worked policy: a
-    /// 1000 token burst that sustains 100 tokens an hour. A full bucket plus a
-    /// full drain plus a full refill extracts twice the capacity across one
-    /// drain time, and not a unit more.
-    function testBurstPlusRateBoundIsTight() external {
+    /// The security property on a worked policy: every burst is capped at the
+    /// capacity, including the ones that come after a full drain. A full
+    /// bucket, a full drain, then a second full burst, and each burst is one
+    /// capacity with the unit after it rejected. `leakRate` decides how soon a
+    /// burst may be repeated, never how large it may be.
+    function testEachRepeatBurstIsCappedAtCapacity() external {
         uint256 capacity = 3600e18;
         // One unit per second, so a full bucket drains in exactly an hour.
         uint256 leakRate = 1e18;

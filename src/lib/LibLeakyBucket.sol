@@ -31,19 +31,32 @@ error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amoun
 ///   the most that can ever be outstanding against the cap at one instant.
 /// - `leakRate`, the sustained rate, in units per second.
 ///
-/// The bound they produce together, for any interval of `elapsed` seconds:
+/// ## Before a fill, and after it
 ///
-/// ```
-/// minted(elapsed) <= capacity + elapsed * leakRate
-/// ```
+/// The burst is the security-critical constraint, and the two sides of a fill
+/// are deliberately not symmetric.
 ///
-/// This is the standard leaky bucket bound, and it is tight: an attacker who
-/// holds a full bucket, waits for it to drain, and fills again extracts
-/// `2 * capacity` across one drain time of `capacity / leakRate` seconds. A
-/// leaky bucket is a burst-plus-rate bound, not a rolling window cap. Sizing
-/// `capacity` is therefore a security decision, not a convenience: it is the
-/// number that has to be survivable on its own if a minter is compromised the
-/// instant the bucket is full.
+/// Before a fill, the burst is capped at `capacity`, always. However long the
+/// bucket has sat untouched, the most a single fill can take is one `capacity`.
+/// Elapsed time cannot enlarge a burst: the leak credited is
+/// `min(level, elapsed * leakRate)`, bounded by the level, which is bounded by
+/// `capacity`, and the level saturates at zero rather than going negative, so
+/// idling banks no credit. Idle for an hour or a decade, the answer is one
+/// `capacity`, never more.
+///
+/// Immediately after a fill consumes the bucket it is zero, at that same
+/// second, not at the next block and not partially.
+///
+/// It then refills by leaking, up to `capacity` and no further, because the
+/// level cannot pass `capacity`. So the next burst is capped exactly as the
+/// first was.
+///
+/// In one line: no burst, at any point in the bucket's history, can exceed
+/// `capacity`. What `leakRate` controls is how often a burst can be repeated,
+/// never how large one can be. Sizing `capacity` is therefore a security
+/// decision rather than a convenience: it is the most a minter can take in one
+/// go if it is compromised at the worst moment, so it has to be survivable on
+/// its own.
 ///
 /// ## State is the caller's
 ///

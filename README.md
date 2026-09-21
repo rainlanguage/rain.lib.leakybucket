@@ -14,23 +14,42 @@ units per second and stops at zero. That is the whole thing.
 
 Two numbers describe a policy:
 
-- **`capacity`** — the burst. The most that can be minted in one block, and the
-  most that can ever be outstanding against the cap at one instant.
+- **`capacity`** — the burst. The most that can be minted in one transaction,
+  and the most that can ever be outstanding against the cap at one instant.
 - **`leakRate`** — the sustained rate, in units per second.
 
-Together they give the standard leaky bucket bound, for any interval of
-`elapsed` seconds:
+### Before a mint, and after it
 
-```
-minted(elapsed) <= capacity + elapsed * leakRate
-```
+The burst is the security-critical constraint, and the two sides of a mint are
+deliberately not symmetric.
 
-The bound is tight. Someone holding a full bucket can wait one drain time
-(`capacity / leakRate` seconds) and burst again, extracting `2 * capacity`
-across that window. **A leaky bucket is a burst-plus-rate bound, not a rolling
-window cap.** Sizing `capacity` is a security decision: it is the number that
-has to be survivable on its own if a minter is compromised at the moment the
-bucket is full.
+**Before a mint, the burst is capped at `capacity`. Always.** However long the
+bucket has been sitting untouched, the most a single mint can take is one
+`capacity`. Elapsed time cannot enlarge a burst. The leak credited before a mint
+is `min(level, elapsed * leakRate)` — bounded by the level, which is bounded by
+`capacity` — and the level stops at zero rather than going negative, so idling
+banks no credit. Idle for an hour or for a decade and the answer is the same:
+one `capacity`, never more.
+
+**Immediately after a mint consumes the bucket, it is zero.** At that same
+second, not at the next block and not partially. What was available has been
+spent, and nothing is available again until time passes.
+
+**Then it refills by leaking, up to `capacity` and no further.** The refill is
+what `leakRate` sets the pace of, and it is bounded by `capacity` as well: the
+bucket cannot refill past full, so the next burst is capped at `capacity`
+exactly as the first one was.
+
+That asymmetry is the security property in one line: **no burst, at any point in
+the bucket's history, can exceed `capacity`.** What `leakRate` controls is how
+often a burst can be repeated, never how large one can be.
+
+So sizing `capacity` is a security decision rather than a convenience: it is the
+number that has to be survivable on its own, because it is the most a minter can
+take in one go if it is compromised at the worst moment.
+
+These bounds are fuzzed over the unbounded input space in
+`test/src/lib/CapacityBound.t.sol`, not merely checked on a worked example.
 
 ## Usage
 
@@ -212,8 +231,12 @@ dependencies beyond `LibSaturatingMath`, itself already audited. The properties
 an audit should hold the implementation to are the ones fuzzed in
 `test/src/lib/`:
 
-- The bound `minted(elapsed) <= capacity + elapsed * leakRate` holds under
-  arbitrary splits of the calls and arbitrary gaps between them.
+- No burst can exceed `capacity`, at any point in a bucket history. `capacity`
+  bounds the level, the headroom and any single fill at every instant, elapsed
+  time never enlarges a single fill, and idling banks no credit however long it
+  lasts. This is the security-critical property.
+- A fill that consumes the bucket leaves zero headroom at that same second, and
+  the refill afterwards is bounded by `capacity` as well.
 - Leaking never raises the level, at any input.
 - Exactly the reported headroom fits and one unit more does not.
 - Checkpointing changes nothing.

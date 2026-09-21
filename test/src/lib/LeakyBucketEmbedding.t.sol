@@ -191,10 +191,11 @@ contract LeakyBucketEmbeddingTest is Test {
         assertEq(cap.totalMinted(), CAPACITY + CAPACITY / 2);
     }
 
-    /// Across any window the total minted stays inside `capacity + elapsed *
-    /// leakRate`, however the minter splits the calls up. The fuzzer picks the
-    /// split and the gaps.
-    function testBurstPlusRateBoundHoldsUnderArbitrarySplits(uint8 mints, uint16[16] memory gaps, uint256 amount)
+    /// However a minter splits its calls, and however long it waits between
+    /// them, the burst available to it is never more than one capacity. The
+    /// fuzzer picks the split and the gaps; the assertion inside the loop is
+    /// the security property, checked at every point of an arbitrary history.
+    function testNoMintExceedsCapacityUnderArbitrarySplits(uint8 mints, uint16[16] memory gaps, uint256 amount)
         external
     {
         mints = uint8(bound(mints, 1, 16));
@@ -204,6 +205,9 @@ contract LeakyBucketEmbeddingTest is Test {
         uint256 minted = 0;
         for (uint256 i = 0; i < mints; i++) {
             vm.warp(block.timestamp + gaps[i]);
+            // The burst on offer is never larger than one capacity, no matter
+            // what has happened up to here or how long the wait was.
+            assertLe(cap.headroom(ALICE), CAPACITY);
             vm.prank(ALICE);
             try cap.mint(amount) {
                 minted += amount;
