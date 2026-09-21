@@ -1,0 +1,6 @@
+# Allowlist: a new path ships only when re-included here.
+/*
+!/src
+!/README.md
+!/LICENSE
+!/LICENSES
