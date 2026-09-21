@@ -81,13 +81,17 @@ contract LibLeakyBucketCheckpointTest is Test {
         this.externalPack(level, timestamp);
     }
 
-    /// The packed reads agree with the unpacked library they delegate to.
+    /// The packed reads agree with the unpacked library they delegate to. Every
+    /// read is covered, including `fillableAt`: a delegation that passed the
+    /// clock where the stored checkpoint belongs would answer from an unleaked
+    /// level and name a later second than the true one.
     function testPackedReadsMatchCore(
         uint192 level,
         uint64 checkpoint,
         uint64 timestamp,
         uint256 capacity,
-        uint256 leakRate
+        uint256 leakRate,
+        uint256 amount
     ) external pure {
         uint256 packed = LibLeakyBucketCheckpoint.pack(level, checkpoint);
         assertEq(
@@ -97,6 +101,10 @@ contract LibLeakyBucketCheckpointTest is Test {
         assertEq(
             LibLeakyBucketCheckpoint.headroomAt(packed, timestamp, capacity, leakRate),
             LibLeakyBucket.headroomAt(level, checkpoint, timestamp, capacity, leakRate)
+        );
+        assertEq(
+            LibLeakyBucketCheckpoint.fillableAt(packed, timestamp, capacity, leakRate, amount),
+            LibLeakyBucket.fillableAt(level, checkpoint, timestamp, capacity, leakRate, amount)
         );
     }
 
@@ -179,5 +187,29 @@ contract LibLeakyBucketCheckpointTest is Test {
         assertEq(LibLeakyBucketCheckpoint.pack(1, 0), 1 << 64);
         assertEq(LibLeakyBucketCheckpoint.pack(0, 1), 1);
         assertEq(LibLeakyBucketCheckpoint.pack(LEAKY_BUCKET_LEVEL_MAX, LEAKY_BUCKET_TIMESTAMP_MAX), type(uint256).max);
+    }
+
+    /// `fillableAt` answers from the STORED checkpoint, not from the clock it
+    /// is asked about. A bucket filled to 3600 at t=1000, asked at t=1900 when
+    /// it can next take 1800: 900 seconds have leaked, so the level is 2700 and
+    /// it needs to reach 1800, which is another 900 seconds — t=2800.
+    ///
+    /// Reading the clock as the checkpoint instead would see an unleaked 3600,
+    /// need 1800 seconds rather than 900, and answer t=3700. The exact second
+    /// is asserted so the two are distinguishable.
+    function testFillableAtAnswersFromTheStoredCheckpointNotTheClock() external pure {
+        uint256 capacity = 3600e18;
+        uint256 leakRate = 1e18;
+        uint256 packed = LibLeakyBucketCheckpoint.pack(3600e18, 1000);
+
+        // Sanity: at t=1900 the bucket has leaked 900 and 1800 does not fit.
+        assertEq(LibLeakyBucketCheckpoint.levelAt(packed, 1900, leakRate), 2700e18);
+        assertEq(LibLeakyBucketCheckpoint.headroomAt(packed, 1900, capacity, leakRate), 900e18);
+
+        assertEq(LibLeakyBucketCheckpoint.fillableAt(packed, 1900, capacity, leakRate, 1800e18), 2800);
+
+        // And it is exactly right: 1800 fits at 2800 and does not at 2799.
+        assertGe(LibLeakyBucketCheckpoint.headroomAt(packed, 2800, capacity, leakRate), 1800e18);
+        assertLt(LibLeakyBucketCheckpoint.headroomAt(packed, 2799, capacity, leakRate), 1800e18);
     }
 }
