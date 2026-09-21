@@ -139,23 +139,24 @@ visible. Round down, so the on chain rate is never faster than the policy.
 ### Arithmetic, and which way it fails
 
 Every operation that could leave the representable range is a saturating one
-from [`rain.math.saturating`](https://github.com/rainlanguage/rain.math.saturating)
+from
+[`rain.math.saturating`](https://github.com/rainlanguage/rain.math.saturating)
 (audited by Protofire, January 2026, same licence as this library). There is no
 hand rolled overflow guard here to review. The directions are chosen so the
 failure mode is always a tighter cap or a drained bucket, never free headroom:
 
-| Operation | Saturates | Because the alternative is |
-| --- | --- | --- |
-| `elapsed * leakRate` | at `type(uint256).max` | a wrapped product is a *small* leak, which is free headroom |
-| `level - leaked` | at zero | a drain past empty underflows to an enormous level |
-| `timestamp - checkpoint` | at zero | a clock behind the checkpoint wraps to billions of years of leak |
-| `capacity - level` | at zero | a level above capacity underflows to an enormous allowance |
+| Operation                | Saturates              | Because the alternative is                                       |
+| ------------------------ | ---------------------- | ---------------------------------------------------------------- |
+| `elapsed * leakRate`     | at `type(uint256).max` | a wrapped product is a _small_ leak, which is free headroom      |
+| `level - leaked`         | at zero                | a drain past empty underflows to an enormous level               |
+| `timestamp - checkpoint` | at zero                | a clock behind the checkpoint wraps to billions of years of leak |
+| `capacity - level`       | at zero                | a level above capacity underflows to an enormous allowance       |
 
 A clock at or behind the checkpoint therefore credits **no leak**, rather than
 reverting or wrapping. Reverting would let a backwards clock brick minting until
 it caught up; wrapping would empty the bucket outright. Crediting nothing can
 only ever report a level at or above the true level, so it can only ever hand
-out *less* headroom than reality.
+out _less_ headroom than reality.
 
 The packed codec **reverts** rather than truncating on an oversized level or
 timestamp. A truncated time field reads as a checkpoint in the distant past,
@@ -166,10 +167,10 @@ Failing closed at an unreachable date beats failing open at a reachable one.
 
 One word: the level in the high 192 bits, the timestamp in the low 64.
 
-| Field | Width | Max |
-| --- | --- | --- |
-| `level` | 192 bits | ~6.2e57, or 6.2e39 whole tokens at 18 decimals |
-| `timestamp` | 64 bits | ~5.8e11 years |
+| Field       | Width    | Max                                            |
+| ----------- | -------- | ---------------------------------------------- |
+| `level`     | 192 bits | ~6.2e57, or 6.2e39 whole tokens at 18 decimals |
+| `timestamp` | 64 bits  | ~5.8e11 years                                  |
 
 `unpack` is total, so any word in the space reads as some valid bucket.
 Governance should reject a `capacity` above `LEAKY_BUCKET_LEVEL_MAX` when it is
@@ -180,11 +181,11 @@ set, rather than discovering it at mint time.
 Measured by `test/src/lib/LibLeakyBucketGas.t.sol`, which asserts a band around
 each figure so a compiler or EVM change that moves one fails the suite.
 
-| Path | Gas |
-| --- | --- |
-| Steady state fill (non zero slot) | 8,845 |
-| First fill (zero slot) | 23,433 |
-| Rejected fill | 8,122 |
+| Path                              | Gas    |
+| --------------------------------- | ------ |
+| Steady state fill (non zero slot) | 8,845  |
+| First fill (zero slot)            | 23,433 |
+| Rejected fill                     | 8,122  |
 
 Against the same bucket held in two slots instead of one: **2,025** saved on the
 extra cold `SLOAD` in the steady state, and **21,925** on the extra `SSTORE` for
@@ -194,15 +195,15 @@ price the second `SSTORE`.
 
 ## Why this exists
 
-Nothing off the shelf was audited, openly licensed *and* a contract agnostic
+Nothing off the shelf was audited, openly licensed _and_ a contract agnostic
 library at the same time, as at September 2026:
 
-| Candidate | Licence | Audited | Fit |
-| --- | --- | --- | --- |
-| [OpenZeppelin 5.7 `RateLimiter`](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/RateLimiter.sol) | MIT | **No** — OZ's `audits/` stops at v5.6 (Feb 2026); this file is new in v5.7 | One shared `capacity`/`window` for every key, so it cannot express per minter caps of different sizes |
-| [Lombard `RateLimitsV2`](https://github.com/lombard-finance/evm-smart-contracts/blob/main/contracts/libs/RateLimitsV2.sol) | MIT header, but **no LICENSE file in the repo** | Yes (OpenZeppelin) | `uint32` timestamp **fails open** after 2106; `public`, so it needs linking |
-| [Chainlink CCIP `RateLimiter`](https://github.com/smartcontractkit/chainlink-ccip) | **BUSL-1.1** | Yes | Licence rules it out |
-| [Hyperlane `RateLimited`](https://github.com/hyperlane-xyz/hyperlane-monorepo/blob/main/solidity/contracts/libs/RateLimited.sol) | MIT OR Apache-2.0 | Partial | An `OwnableUpgradeable` **contract** with governance built in, not a library |
+| Candidate                                                                                                                            | Licence                                         | Audited                                                                    | Fit                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [OpenZeppelin 5.7 `RateLimiter`](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/RateLimiter.sol) | MIT                                             | **No** — OZ's `audits/` stops at v5.6 (Feb 2026); this file is new in v5.7 | One shared `capacity`/`window` for every key, so it cannot express per minter caps of different sizes |
+| [Lombard `RateLimitsV2`](https://github.com/lombard-finance/evm-smart-contracts/blob/main/contracts/libs/RateLimitsV2.sol)           | MIT header, but **no LICENSE file in the repo** | Yes (OpenZeppelin)                                                         | `uint32` timestamp **fails open** after 2106; `public`, so it needs linking                           |
+| [Chainlink CCIP `RateLimiter`](https://github.com/smartcontractkit/chainlink-ccip)                                                   | **BUSL-1.1**                                    | Yes                                                                        | Licence rules it out                                                                                  |
+| [Hyperlane `RateLimited`](https://github.com/hyperlane-xyz/hyperlane-monorepo/blob/main/solidity/contracts/libs/RateLimited.sol)     | MIT OR Apache-2.0                               | Partial                                                                    | An `OwnableUpgradeable` **contract** with governance built in, not a library                          |
 
 ## Audit scope
 

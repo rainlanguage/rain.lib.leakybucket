@@ -3,32 +3,8 @@
 pragma solidity =0.8.25;
 
 import {Test, console2} from "forge-std-1.16.2/src/Test.sol";
-import {LibLeakyBucket} from "../../../src/lib/LibLeakyBucket.sol";
-import {LibLeakyBucketCheckpoint} from "../../../src/lib/LibLeakyBucketCheckpoint.sol";
-
-/// The bucket in one slot: what a concrete embedding the shipped codec pays.
-contract PackedBucket {
-    uint256 internal sCheckpoint;
-
-    function fill(uint256 capacity, uint256 leakRate, uint256 amount) external {
-        sCheckpoint = LibLeakyBucketCheckpoint.fill(sCheckpoint, block.timestamp, capacity, leakRate, amount);
-    }
-}
-
-/// The same bucket with the level and the checkpoint in separate slots: what
-/// the codec avoids. Same arithmetic, same result, one more `SLOAD` and one
-/// more `SSTORE` on every mint, and a second write the caller has to remember
-/// to make.
-contract UnpackedBucket {
-    uint256 internal sLevel;
-    uint256 internal sCheckpoint;
-
-    function fill(uint256 capacity, uint256 leakRate, uint256 amount) external {
-        uint256 level = LibLeakyBucket.fillAt(sLevel, sCheckpoint, block.timestamp, capacity, leakRate, amount);
-        sLevel = level;
-        sCheckpoint = block.timestamp;
-    }
-}
+import {PackedBucket} from "../../lib/PackedBucket.sol";
+import {UnpackedBucket} from "../../lib/UnpackedBucket.sol";
 
 /// Each band asserted here is a `gasleft()` delta in the regime the test name
 /// gives. A compiler or EVM change that moves a measurement out of its band
