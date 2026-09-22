@@ -7,3 +7,8 @@ dependencies
 remappings.txt
 .pre-commit-config.yaml
 .gas-snapshot
+
+# Mutation-probe scratch. `mutants.toml` and `.mutation-test/check.sh` are the
+# spec of the coverage claim in `audit/` and ARE tracked; the run output is not.
+.mutation-test/*.json
+.mutation-test/PROGRESS.md

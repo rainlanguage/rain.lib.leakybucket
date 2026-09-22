@@ -1,0 +1,28 @@
+name: mutation-scan-freshness
+# `audit/mutation-test-scans.json` is a hand-appended coverage claim that an
+# external auditor is handed as evidence of test strength. Nothing in it is
+# derived from the tree, so it goes stale silently and in the direction of
+# overstating. This asks whether the tree it describes is still the tree.
+#
+# rainix's `mutation-ledger` action (run by rainix-sol-static) checks the
+# record's shape and that each SHA is an ancestor of HEAD; it never compares
+# the described tree to the actual one, which is the half this adds.
+#
+# A fork's push event fires in the fork, not here, so `pull_request` is what
+# gives an external PR this check at all. `push` stays branch-scoped to main so
+# a same-repo PR branch runs it once rather than twice.
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      # Shared composite so the `actions/checkout` SHA stays pinned in one
+      # place org-wide. Full history: the check diffs HEAD against the commit
+      # the newest record names, which a shallow checkout cannot reach.
+      - uses: rainlanguage/rainix/.github/actions/checkout@main
+        with:
+          fetch-depth: '0'
+      - run: ./audit/check-scan-freshness.sh
