@@ -208,9 +208,20 @@ library LibLeakyBucketCheckpoint {
 
     /// Fill a packed bucket with `amount` at `timestamp`, returning the new
     /// packed checkpoint to store. Reverts with `LeakyBucketCapacityExceeded`
-    /// if the amount does not fit, or `LeakyBucketCapacityOverflow` if
-    /// `capacity` is one this codec cannot enforce, and the caller stores
-    /// nothing either way.
+    /// if the amount does not fit, `LeakyBucketCapacityOverflow` if `capacity`
+    /// is one this codec cannot enforce, or `LeakyBucketTimestampOverflow` if
+    /// `timestamp` is past `LEAKY_BUCKET_TIMESTAMP_MAX` and so cannot be
+    /// recorded. The caller stores nothing in any of the three cases.
+    ///
+    /// That third path is reachable from any caller that supplies a time from
+    /// somewhere other than `block.timestamp`, which this library permits and
+    /// the backwards clock tests exercise. It is listed because the list is
+    /// read as exhaustive: a `try`/`catch`, or a frontend decoding a failed
+    /// simulation, is written from this docstring.
+    ///
+    /// `LeakyBucketLevelOverflow` is not reachable here, and that is a property
+    /// rather than an accident: the capacity guard above bounds every level
+    /// this can produce, so `pack` can only ever be handed a level that fits.
     ///
     /// The returned word carries the new level and the timestamp that level
     /// belongs to, so writing it back is the whole of the state update.
