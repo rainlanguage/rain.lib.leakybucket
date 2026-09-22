@@ -35,8 +35,23 @@ error LeakyBucketTimestampOverflow(uint256 timestamp);
 /// @param level The level that did not fit.
 error LeakyBucketLevelOverflow(uint256 level);
 
+/// One bucket. Store it wherever a bucket is needed — a mapping by minter, a
+/// mapping by pair, a single slot — load it, hand it to `fill`, and store the
+/// checkpoint `fill` returns.
+/// @param checkpoint The packed `(level, timestamp)` word. Zero is an empty
+/// bucket checkpointed at the epoch, so an untouched slot needs no initialiser.
+/// Only ever store what `fill` returned.
+/// @param capacity The burst. Must be at or below `LEAKY_BUCKET_LEVEL_MAX`.
+/// @param leakRate The sustained rate, in units per second.
+struct LeakyBucket {
+    uint256 checkpoint;
+    uint256 capacity;
+    uint256 leakRate;
+}
+
 /// @title LibLeakyBucket
-/// @notice A leaky bucket meter over one 256 bit word of caller-held state.
+/// @notice A leaky bucket meter, pure, over a `LeakyBucket` the caller holds:
+/// one packed word of state and the policy pair beside it.
 ///
 /// The bucket holds a `level`. Filling adds to the level and is rejected if the
 /// level would pass `capacity`. The level leaks away continuously at `leakRate`
@@ -53,10 +68,10 @@ error LeakyBucketLevelOverflow(uint256 level);
 ///
 /// ## The surface is one function
 ///
-/// `fill` is the product. It takes the packed checkpoint a caller has stored,
-/// a clock, the policy pair and an amount, and it either reverts or returns the
-/// word to store back. `headroomAt` is the only other entry point and it exists
-/// for one reason, written into its own NatSpec.
+/// `fill` is the product. It takes a `LeakyBucket`, a clock and an amount, and
+/// either reverts or returns the checkpoint to store. `headroomAt` is the only
+/// other entry point and it exists for one reason, written into its own
+/// NatSpec.
 ///
 /// Everything else here is `private`, because everything else here is a step of
 /// `fill` rather than a thing to call. Every exported symbol is one a caller can
@@ -92,18 +107,19 @@ error LeakyBucketLevelOverflow(uint256 level);
 ///
 /// ## State is the caller's
 ///
-/// Every function here is `pure` and takes the bucket state as an argument. The
-/// library owns no storage, no slot, no mapping, no owner, no initializer and
-/// no upgrade hook. A concrete contract holds the one word wherever it likes,
-/// under whatever key it likes, and supplies `capacity` and `leakRate` from
-/// wherever its governance puts them: immutables, a timelocked setter, a multi
-/// stage upgrade, or a per minter mapping with a different pair per minter. The
-/// library never sees any of that and cannot constrain it.
+/// Both entry points are `pure` over a `LeakyBucket` in memory. The library
+/// owns no storage, no slot, no mapping, no owner, no initializer and no
+/// upgrade hook. A concrete contract stores the struct wherever it likes, under
+/// whatever key it likes, sets `capacity` and `leakRate` from wherever its
+/// governance puts them — a constructor, a timelocked setter, a multi stage
+/// upgrade, a per minter mapping with a different pair per minter — and stores
+/// back the checkpoint `fill` returns. The library never sees any of that and
+/// cannot constrain it.
 ///
 /// The state is one word: the level in the high 192 bits and the timestamp that
 /// level was recorded at in the low 64. Both fields are read with a shift or a
-/// mask and no keccak, so the whole hot path of a capped mint is: load one
-/// word, one multiply for the leak, one compare against capacity, store one
+/// mask and no keccak, so the whole hot path of a capped mint is: load the
+/// bucket, one multiply for the leak, one compare against capacity, store one
 /// word.
 ///
 /// The packing is not a convenience. `fill` computes a level that belongs to
@@ -111,41 +127,39 @@ error LeakyBucketLevelOverflow(uint256 level);
 /// older timestamp in place credits the same leak again on the next call, which
 /// quietly stops the cap binding. It is a one line mistake with no symptom
 /// until it is exploited, which is the worst shape a bug in a mint cap can
-/// have. Here the two are one word, `fill` returns that word, and the only
-/// thing a caller can do with it is write it back whole. The failure mode is
-/// removed rather than documented.
+/// have. Here the two are one word and `fill` returns it whole; the caller
+/// never holds the halves apart. The failure mode is removed rather than
+/// documented.
 ///
 /// ```solidity
 /// // One bucket per minter, each with its own policy, governed however the
 /// // concrete likes.
-/// mapping(address minter => uint256 checkpoint) internal sBuckets;
-/// mapping(address minter => uint256 capacity) internal sCapacity;
-/// mapping(address minter => uint256 leakRate) internal sLeakRate;
+/// mapping(address minter => LeakyBucket bucket) internal sBuckets;
 ///
 /// function mint(address to, uint256 amount) external {
-///     sBuckets[msg.sender] = LibLeakyBucket.fill(
-///         sBuckets[msg.sender], block.timestamp, sCapacity[msg.sender], sLeakRate[msg.sender], amount
-///     );
+///     LibLeakyBucket.fill(sBuckets[msg.sender], block.timestamp, amount);
 ///     _mint(to, amount);
 /// }
 /// ```
 ///
-/// A zero word is a valid initial state and means an empty bucket checkpointed
-/// at the epoch. No initializer is needed: an untouched slot is a bucket that
-/// has been empty since before the chain existed, which is exactly what it
-/// should be.
+/// A zero checkpoint is a valid initial state and means an empty bucket
+/// checkpointed at the epoch. No initializer is needed: an untouched slot is a
+/// bucket that has been empty since before the chain existed, which is exactly
+/// what it should be. A zero capacity beside it is a closed door, so an
+/// unconfigured bucket fails closed.
 ///
 /// The same identity is a hazard on the way out, and the library cannot see the
-/// difference: a slot that is *cleared* reads identically to one that was never
-/// used. `delete` on a bucket is not cleanup, it is a full refund of whatever
-/// was outstanding, granted at that instant. A concrete that tidies up after a
-/// revoked minter with `delete sBuckets[minter]`, and later grants that address
-/// the role again, has handed it a fresh `capacity` that no elapsed time paid
-/// for. Re-keying buckets in a storage migration does the same thing. The
-/// per-burst bound this library enforces is per slot, so anything that resets a
-/// slot resets the bound with it: leave a retired bucket where it is (it costs
-/// nothing, and it leaks down on its own), and carry the word across verbatim
-/// when state has to move.
+/// difference: a checkpoint that is *cleared* reads identically to one that was
+/// never used. `delete` on a bucket is not cleanup, it is a full refund of
+/// whatever was outstanding, granted at that instant. A concrete that tidies up
+/// after a revoked minter with `delete sBuckets[minter]`, and later grants that
+/// address a policy again, has handed it a fresh `capacity` that no elapsed
+/// time paid for. Re-keying buckets in a storage migration does the same thing.
+/// The per-burst bound this library enforces is per bucket, so anything that
+/// resets a checkpoint resets the bound with it: leave a retired bucket where
+/// it is (it costs nothing, and it leaks down on its own), write the policy
+/// fields and never the checkpoint when governance changes, and carry the
+/// struct across verbatim when state has to move.
 ///
 /// ## Seconds, not blocks
 ///
@@ -343,7 +357,7 @@ library LibLeakyBucket {
     /// The returned level belongs to `timestamp`, not to `checkpoint`, except
     /// where `timestamp` is at or behind `checkpoint` and no leak was credited,
     /// in which case it belongs to `checkpoint`. `fill` is what reconciles that
-    /// with the word it writes back.
+    /// with the word it returns.
     ///
     /// An `amount` of zero is accepted whenever the bucket is at or over
     /// capacity as well as under it, because zero fits in zero headroom. It
@@ -508,27 +522,21 @@ library LibLeakyBucket {
     /// reads zero, every non zero fill is rejected, and the bucket leaks down
     /// under the new policy until it fits. No fill is needed to make the new
     /// capacity bind, and nothing has to be migrated.
-    /// @param checkpoint The packed checkpoint.
+    /// @param bucket The bucket.
     /// @param timestamp The timestamp to evaluate the bucket at, in seconds.
-    /// @param capacity The bucket capacity.
-    /// @param leakRate The leak in units per second.
     /// @return The amount that would fit at `timestamp`.
-    function headroomAt(uint256 checkpoint, uint256 timestamp, uint256 capacity, uint256 leakRate)
-        internal
-        pure
-        returns (uint256)
-    {
-        checkFillableDomain(capacity, timestamp);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));
+    function headroomAt(LeakyBucket memory bucket, uint256 timestamp) internal pure returns (uint256) {
+        checkFillableDomain(bucket.capacity, timestamp);
+        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
+        return headroomFrom(bucket.capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));
     }
 
-    /// Fill a bucket with `amount` at `timestamp`, returning the new packed
-    /// checkpoint to store. Reverts with `LeakyBucketCapacityExceeded` if the
+    /// Fill a bucket with `amount` at `timestamp`, returning the new checkpoint
+    /// to store. Reverts with `LeakyBucketCapacityExceeded` if the
     /// amount does not fit, `LeakyBucketCapacityOverflow` if `capacity` is one
     /// this library cannot enforce, or `LeakyBucketTimestampOverflow` if
     /// `timestamp` is past the width of the packed field and so cannot be
-    /// recorded. The caller stores nothing in any of the three cases, and that
+    /// recorded. Nothing is returned in any of the three cases, and that
     /// list is exhaustive: a `try`/`catch`, or a frontend decoding a failed
     /// simulation, is written from it.
     ///
@@ -537,7 +545,7 @@ library LibLeakyBucket {
     /// the backwards clock tests exercise.
     ///
     /// The returned word carries the new level and the timestamp that level
-    /// belongs to, so writing it back is the whole of the state update.
+    /// belongs to; storing it is the whole of the state update.
     ///
     /// ## The stored timestamp never goes backwards
     ///
@@ -564,21 +572,15 @@ library LibLeakyBucket {
     /// the second it belongs to. When the clock is ahead, which is every case a
     /// monotonic `block.timestamp` can produce, this is `timestamp` and nothing
     /// changes.
-    /// @param checkpoint The packed checkpoint.
+    /// @param bucket The bucket. Not modified.
     /// @param timestamp The timestamp to fill at, in seconds.
-    /// @param capacity The bucket capacity.
-    /// @param leakRate The leak in units per second.
     /// @param amount The amount to fill.
-    /// @return The new packed checkpoint.
-    function fill(uint256 checkpoint, uint256 timestamp, uint256 capacity, uint256 leakRate, uint256 amount)
-        internal
-        pure
-        returns (uint256)
-    {
-        checkFillableDomain(capacity, timestamp);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
+    /// @return The new packed checkpoint, to store as `bucket.checkpoint`.
+    function fill(LeakyBucket memory bucket, uint256 timestamp, uint256 amount) internal pure returns (uint256) {
+        checkFillableDomain(bucket.capacity, timestamp);
+        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
         return pack(
-            fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),
+            fillAt(level, checkpointTimestamp, timestamp, bucket.capacity, bucket.leakRate, amount),
             timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp
         );
     }

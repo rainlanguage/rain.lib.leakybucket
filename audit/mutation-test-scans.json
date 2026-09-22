@@ -143,5 +143,28 @@
       "filed": [],
       "notes": "Verdicts identical to the previous entry, as expected: the only change was three lines of NatSpec. Recorded because check-scan-freshness.sh diffs the src/ and test/ trees byte for byte and cannot tell a comment from a statement, so a documentation fix inside src/ costs a full 57-mutant probe to earn the record back. That is the gate behaving correctly rather than a defect - a check that tried to distinguish comments from code would be a check that could be fooled. Survivors are unchanged and unchanged in reason: M55, M56 and M57 are pack's rejection paths, which fill bounds out of reach before pack is called. M54, the off-by-one that would refuse a legitimate capacity at LEAKY_BUCKET_LEVEL_MAX, is killed."
     }
+  },
+  {
+    "timestamp": "2026-09-22T15:57:25Z",
+    "commit": "aac3acc76ebd04b3db84b6f4ea6491c106bf4a7c",
+    "testsAfterCommit": "aac3acc76ebd04b3db84b6f4ea6491c106bf4a7c",
+    "publishedTag": "sol-v0.1.4",
+    "commitsAheadOfTag": 19,
+    "scope": "re-probe after #110 moved the public API onto a LeakyBucket struct taken by storage reference. Six mutants retargeted from the loose-argument entry points to the struct fields (M40-M45), two added: M58 drops fill's write of bucket.checkpoint, M59 reads the leak rate from the capacity field. 59 total, all against src/lib/LibLeakyBucket.sol.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 59,
+      "mutantsKilledByPreExistingSuite": 56,
+      "mutantsSurvivedPreExistingSuite": 3,
+      "mutantsKilledAfter": 56,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 55,
+      "testsAfter": 56,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Survivors unchanged from the previous two records and unchanged in reason: M55, M56, M57 are pack's rejection paths, which fill bounds out of reach before pack is called. Both new mutants are killed: M58 (the checkpoint write dropped) by testFillWritesOnlyTheCheckpoint and the suite's every read-after-fill; M59 (leak rate read from the capacity field) by the drain-rate tests. One test added, testFillWritesOnlyTheCheckpoint, pinning that fill writes the checkpoint and leaves capacity and leakRate untouched, which is a property the struct API newly makes expressible. A first probe of this tree was run concurrently with forge test in the same clone and was discarded; when it was killed it left one mutant applied (checkFillableDomain's two checks swapped), which was found by the suite before this record's probe and restored. This entry is from a second, isolated probe against the committed tree."
+    }
   }
 ]

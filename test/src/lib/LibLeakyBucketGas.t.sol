@@ -14,40 +14,52 @@ import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedP
 /// Every measurement is the *first* touch of the subject's storage within its
 /// test, because `forge` keeps slots warm for the whole of a test body and a
 /// second measurement in the same body would price warm slots at 100 gas and
-/// report a saving an order of magnitude too small. Priming happens in
-/// `setUp`, which is a separate call, so the slots are non zero and cold when
-/// the measurement starts, exactly as they are for a mint in a fresh
-/// transaction.
+/// report a saving an order of magnitude too small. Every subject is
+/// constructed, and where it is primed, primed, in `setUp`, which is a
+/// separate call, so its slots are cold when the measurement starts, exactly
+/// as they are for a mint in a fresh transaction. That includes the two policy
+/// slots: a real deployment set them in an earlier transaction, so a fill pays
+/// a cold read for each, and constructing the subject inside a test body would
+/// leave them warm and under-report a fill by two cold `SLOAD`s.
+///
+/// A fill reads all three fields of the bucket from storage, and the caller
+/// stores the checkpoint back.
 contract LibLeakyBucketGasTest is Test {
     /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`.
     uint256 internal constant CAPACITY = WORKED_CAPACITY;
     uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
     uint256 internal constant DRAIN = WORKED_DRAIN;
 
+    /// Primed, so its checkpoint slot is non zero and cold.
     PackedBucket internal sPacked;
 
-    /// `PackedBucket`'s only slot as `setUp` left it, for the rejected fill
+    /// Never filled, so its checkpoint slot is zero and cold, with the policy
+    /// slots beside it set and cold.
+    PackedBucket internal sFresh;
+
+    /// `sPacked`'s checkpoint slot as `setUp` left it, for the rejected fill
     /// below to compare against. Taken here and not in the test body because
     /// reading the slot immediately before the measured call warms both the
-    /// account and the slot and measures a different regime entirely: 8,188
-    /// gas becomes 1,688. `setUp` is a separate call, the access list resets
-    /// between it and a test body, and the measurement is 8,188 either way.
+    /// account and the slot and measures a different regime entirely. `setUp`
+    /// is a separate call, the access list resets between it and a test body,
+    /// and the measurement is the cold one either way.
     bytes32 internal sPackedSlotAtSetUp;
 
     function setUp() external {
-        sPacked = new PackedBucket();
+        sPacked = new PackedBucket(CAPACITY, LEAK_RATE);
+        sFresh = new PackedBucket(CAPACITY, LEAK_RATE);
         vm.warp(1_700_000_000);
         // Prime it so the measured fills hit a non zero slot, then move the
         // clock on by a sixth of a drain time, which is far more leak than the
         // unit primed above, so every measured fill below starts from an empty
         // bucket with a real leak to apply.
-        sPacked.fill(CAPACITY, LEAK_RATE, 1e18);
+        sPacked.fill(1e18);
         vm.warp(block.timestamp + DRAIN / 6);
         sPackedSlotAtSetUp = vm.load(address(sPacked), bytes32(uint256(0)));
     }
 
     function measure(address target, uint256 amount) internal returns (uint256) {
-        bytes memory call = abi.encodeWithSignature("fill(uint256,uint256,uint256)", CAPACITY, LEAK_RATE, amount);
+        bytes memory call = abi.encodeWithSignature("fill(uint256)", amount);
         uint256 before = gasleft();
         (bool ok,) = target.call(call);
         uint256 used = before - gasleft();
@@ -55,14 +67,13 @@ contract LibLeakyBucketGasTest is Test {
         return used;
     }
 
-    /// The first fill a brand new minter ever makes, against a zero slot. This
-    /// is the one time the 20k zero to non zero `SSTORE` is paid.
+    /// The first fill a brand new minter ever makes, against a zero checkpoint
+    /// slot. This is the one time the 20k zero to non zero `SSTORE` is paid.
     function testGasFirstFillIntoEmptySlot() external {
-        PackedBucket fresh = new PackedBucket();
-        uint256 gas = measure(address(fresh), 1e18);
+        uint256 gas = measure(address(sFresh), 1e18);
         console2.log("packed first fill (zero slot)", gas);
-        assertGt(gas, 20_000);
-        assertLt(gas, 30_000);
+        assertGt(gas, 24_000);
+        assertLt(gas, 34_000);
     }
 
     /// The steady state, and the number that matters: a minter that has minted
@@ -70,17 +81,16 @@ contract LibLeakyBucketGasTest is Test {
     function testGasSteadyStateFill() external {
         uint256 gas = measure(address(sPacked), 1e18);
         console2.log("packed steady state fill", gas);
-        assertGt(gas, 5_000);
-        assertLt(gas, 12_000);
+        assertGt(gas, 9_000);
+        assertLt(gas, 16_000);
     }
 
-    /// A rejected fill costs the read and the revert, and writes nothing. The
+    /// A rejected fill costs the reads and the revert, and writes nothing. The
     /// band belongs to a capacity rejection specifically, so the rejection is
     /// identified before the gas is banded, and the "writes nothing" half is a
     /// state claim rather than a gas claim so it is asserted as one.
     function testGasRejectedFill() external {
-        bytes memory call =
-            abi.encodeWithSignature("fill(uint256,uint256,uint256)", CAPACITY, LEAK_RATE, type(uint256).max);
+        bytes memory call = abi.encodeWithSignature("fill(uint256)", type(uint256).max);
         uint256 before = gasleft();
         (bool ok, bytes memory reason) = address(sPacked).call(call);
         uint256 gas = before - gasleft();
@@ -89,21 +99,22 @@ contract LibLeakyBucketGasTest is Test {
         // 1e18 and moved the clock on `DRAIN / 6` = 600 seconds, and 600e18 of
         // leak against 1e18 of level leaves it empty, so the level the error
         // reports is zero. Copying the reason does land inside the measured
-        // window; it moves the measurement by 57 gas, 8,188 to 8,131, which is
+        // window; it moves the measurement by a few tens of gas, which is
         // nothing against a band 4,000 wide.
         assertTrue(!ok);
         assertEq(reason, abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, 0, type(uint256).max));
 
         // The other half of the claim. The band is only indirect evidence for
-        // it: a figure under 10,000 rules out a fresh `SSTORE` but not a warm
-        // rewrite of the same slot at 100 gas, so a codec that wrote before
-        // reverting, or a concrete that swallowed the revert after storing,
-        // would sit inside the band. `sCheckpoint` is `PackedBucket`'s only
-        // state variable, so it is slot 0.
+        // it: a figure under the steady state band rules out a fresh `SSTORE`
+        // but not a warm rewrite of the same slot at 100 gas, so a codec that
+        // wrote before reverting, or a concrete that swallowed the revert
+        // after storing, would sit inside the band. The checkpoint is the
+        // first field of `PackedBucket`'s only state variable, so it is slot
+        // 0.
         assertEq(vm.load(address(sPacked), bytes32(uint256(0))), sPackedSlotAtSetUp);
 
         console2.log("packed rejected fill", gas);
-        assertGt(gas, 6_000);
-        assertLt(gas, 10_000);
+        assertGt(gas, 10_000);
+        assertLt(gas, 14_000);
     }
 }
