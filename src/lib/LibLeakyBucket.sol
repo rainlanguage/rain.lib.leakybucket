@@ -446,10 +446,7 @@ library LibLeakyBucket {
     }
 
     /// Pack a level and a timestamp into one word. The layout, in one place.
-    ///
-    /// Both fields are checked. A field that wrapped would fail open and do it
-    /// silently: a wrapped timestamp reads as a checkpoint far in the past,
-    /// which is a full bucket of headroom nobody earned.
+    /// Reverts rather than truncating either field.
     /// @param level The level to pack.
     /// @param timestamp The timestamp to pack, in seconds.
     /// @return The packed checkpoint.

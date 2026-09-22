@@ -22,10 +22,11 @@ just ships without it.
 
 ## Gas bands are an assertion, not a budget
 
-`test/src/lib/LibLeakyBucketGas.t.sol` asserts narrow gas bands, and README.md
-prints the same figures. A change that moves gas updates both numbers and says
-why. Widening a band so the test goes green destroys the only signal that file
-exists to give.
+`test/src/lib/LibLeakyBucketGas.t.sol` asserts a coarse band around each figure
+and logs the figure itself. Widening a band so the test goes green destroys the
+only signal that file exists to give. Exact figures live in that test's output
+and nowhere else: a gas number does not survive an optimizer, compiler or EVM
+change, so anywhere else it is written down is a place it goes wrong silently.
 
 ## `audit/mutation-test-scans.json` is evidence, appended by hand
 

@@ -283,20 +283,14 @@ policy change rather than a refused mint.
 
 ## Gas
 
-Measured by `test/src/lib/LibLeakyBucketGas.t.sol`, which logs each figure and
-asserts a band around it. The bands are coarse — the widest admits a value a
-third above the figure it brackets — so they catch a large compiler or EVM
-change; they do not pin the numbers below, which are read off that test's output
-and updated by hand.
+A fill is one `SLOAD` and one `SSTORE`, which is the point of packing the level
+and the checkpoint into one word.
 
-| Path                              | Gas    |
-| --------------------------------- | ------ |
-| Steady state fill (non zero slot) | 9,207  |
-| First fill (zero slot)            | 23,795 |
-| Rejected fill                     | 8,303  |
-
-157 of each successful fill is `pack`'s two overflow guards. A rejected fill does
-not pay it, because it reverts before reaching `pack`.
+`test/src/lib/LibLeakyBucketGas.t.sol` logs the current figures and asserts a
+coarse band around each. Run it for the numbers. They are not reproduced here:
+a gas figure does not survive a change of optimizer settings, compiler or EVM
+version, so a table of them in a README is wrong as soon as any of those moves
+and nothing makes it fail when it does.
 
 ## Why this exists
 
