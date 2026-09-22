@@ -51,5 +51,28 @@
       "filed": [],
       "notes": "Fix pass rather than a discovery scan, so the two findings were already known and no new candidate was raised. All 49 prior mutants re-probed and still killed; M42/M43 retargeted to the new multi-line fill body. Ten new mutants cover the new behaviour and all are killed, including M50, which restores the exact defect filed as #1 (fill storing the raw clock) and is killed by testBackwardsClockBanksNoCredit and testFillBehindTheCheckpointGrantsNoHeadroom. Verified independently of the agent that produced the fix: full 59-mutant probe re-run against the committed tree, 59/59 killed, 0 survived, 0 no-run, 0 harness errors, on a green 62-test baseline. Known probe-config wart, not fixed here: the fail-pattern in mutants.toml does not name killers when the revert reason itself contains a bracket, which is why several checkCapacity mutants show KILLED with no named killer."
     }
+  },
+  {
+    "timestamp": "2026-09-22T10:43:21Z",
+    "commit": "9b19a8cecceb2f1a2ebe0e2508461100b1ca5dc8",
+    "testsAfterCommit": "9b19a8cecceb2f1a2ebe0e2508461100b1ca5dc8",
+    "publishedTag": "sol-v0.1.3",
+    "commitsAheadOfTag": 23,
+    "scope": "whole repo, re-probe after the 41 audit-remediation PRs merged. Same two files as the previous scans (src/lib/LibLeakyBucket.sol, src/lib/LibLeakyBucketCheckpoint.sol) but against the merged tree, which moved 16 files and ~1489 lines across src/ and test/ since 6398377: leakRatePer and the LEAKY_BUCKET_SECONDS_PER_* constants, the extracted headroomFrom, LEAKY_BUCKET_TIMESTAMP_MAX and LEAKY_BUCKET_LEVEL_MAX as derived rather than literal constants, checkTimestamp and checkFillableDomain, and the codec's out-of-range fillableAt sentinel",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 77,
+      "mutantsKilledByPreExistingSuite": 77,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 77,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 80,
+      "testsAfter": 80,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Maintenance re-probe, not a discovery scan: the previous record described 6398377 and the merges invalidated it, which is what mutation-scan-freshness was failing on (and, through the publish gate's refusal to release a commit with a failed run, what was failing Package Release on main). Eleven of the 59 prior mutants were HARNESS-ERROR against the merged tree because the refactors moved their targets (M08-M11 and M19 through the headroomFrom extraction, M41 through fillableAt binding its result before the sentinel clamp, M48/M49 through the width constants becoming derived, M57-M59 through checkCapacity becoming checkFillableDomain); all eleven were retargeted to the current source with their intent preserved, and M11 and M57-M59 renamed where the refactor changed what the mutation now means. Eighteen new mutants (M60-M77) cover the behaviour that landed after 6398377 and had nothing targeting it. Result: 77/77 killed, 0 survived, 0 no-run, 0 harness errors, on a green 80-test baseline. Every one of the 18 new mutants was killed by the PRE-EXISTING suite, so this run added no tests and testsAfterCommit equals the scanned commit. Adversarial pass over the new behaviour raised no candidate: leakRatePer's floor division matches its documented 'rounds DOWN so the on chain rate is never faster than the policy', its shortfall is under one unit a second as claimed, and its zero-period panic is documented intent rather than an unhandled input."
+    }
   }
 ]
