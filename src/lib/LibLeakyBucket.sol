@@ -106,6 +106,10 @@ library LibLeakyBucket {
         }
     }
 
+    function max(uint256 a, uint256 b) private pure returns (uint256) {
+        return a > b ? a : b;
+    }
+
     function unpack(uint256 checkpoint) private pure returns (uint256 level, uint256 timestamp) {
         unchecked {
             level = checkpoint >> LEAKY_BUCKET_TIMESTAMP_BITS;
@@ -136,7 +140,7 @@ library LibLeakyBucket {
         (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
         return pack(
             fillAt(level, checkpointTimestamp, timestamp, bucket.capacity, bucket.leakRate, amount),
-            timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp
+            max(timestamp, checkpointTimestamp)
         );
     }
 }

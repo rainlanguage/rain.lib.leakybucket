@@ -365,20 +365,20 @@ replacement = 'fillAt(level, checkpointTimestamp, timestamp, bucket.capacity, bu
 [[mutants]]
 name = "M46 fill: stores the OLD checkpoint, double crediting the leak"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp'
+target = 'max(timestamp, checkpointTimestamp)'
 replacement = 'checkpointTimestamp'
 
 [[mutants]]
 name = "M47 fill: stores the raw clock, so a stale one regresses the checkpoint"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp'
+target = 'max(timestamp, checkpointTimestamp)'
 replacement = 'timestamp'
 
 [[mutants]]
 name = "M48 fill: stores the EARLIER of the clock and the checkpoint"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp'
-replacement = 'timestamp < checkpointTimestamp ? timestamp : checkpointTimestamp'
+target = 'return a > b ? a : b;'
+replacement = 'return a < b ? a : b;'
 
 # ---------------- the layout constants ----------------
 # All three are derived from one free parameter, so a mutant on the parameter
