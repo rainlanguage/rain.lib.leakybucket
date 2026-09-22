@@ -188,9 +188,18 @@ visible. Round down, so the on chain rate is never faster than the policy.
 Every operation that could leave the representable range is a saturating one
 from
 [`rain.math.saturating`](https://github.com/rainlanguage/rain.math.saturating)
-(audited by Protofire, January 2026, same licence as this library). There is no
-hand rolled overflow guard here to review. The directions are chosen so the
-failure mode is always a tighter cap or a drained bucket, never free headroom:
+(audited by Protofire, January 2026, same licence as this library).
+
+No overflow guard is hand rolled around those operations. What is hand written
+is `unchecked`, in five places: the sum in `fillAt`, the `capacity - amount` and
+the ceiling division in `fillableAt` — each bounded by a check that runs before
+it, with that bound stated in a comment at the block — and the shift and mask in
+the codec's `pack` and `unpack`, which are bit operations that cannot overflow
+at all. None of them is a guard, and none of them is out of scope for a review
+of the arithmetic.
+
+The saturation directions are chosen so the failure mode is always a tighter cap
+or a drained bucket, never free headroom:
 
 | Operation                | Saturates              | Because the alternative is                                       |
 | ------------------------ | ---------------------- | ---------------------------------------------------------------- |
