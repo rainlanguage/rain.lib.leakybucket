@@ -300,21 +300,21 @@ hand.
 | --------------------------------- | ------ |
 | Steady state fill (non zero slot) | 9,207  |
 | First fill (zero slot)            | 23,795 |
-| Rejected fill                     | 8,360  |
+| Rejected fill                     | 8,303  |
 
-Against the same bucket held in two slots instead of one: **1,681** saved on the
-extra cold `SLOAD` in the steady state, and **21,581** on the extra `SSTORE` for
+Against the same bucket held in two slots instead of one: **1,807** saved on the
+extra cold `SLOAD` in the steady state, and **21,707** on the extra `SSTORE` for
 a first fill. The two are measured separately because `forge` carries its dirty
 slot journal across from `setUp`, so a single steady state measurement cannot
 price the second `SSTORE`.
 
-That 1,681 is a net figure, not the price of one opcode. The two slot layout
+That 1,807 is a net figure, not the price of one opcode. The two slot layout
 pays one extra cold `SLOAD`, 2,100 gas, and one extra `SSTORE`; against that the
 codec pays for its own packing and for the comparisons a two slot layout has no
 reason to run — the bounds on a `capacity` the packed level field cannot hold
 and on a `timestamp` it cannot record, the level and the timestamp `pack`
 refuses to truncate, and the check that keeps the stored checkpoint from moving
-backwards. 1,681 is what is left of the one after the other, and it shrinks each
+backwards. 1,807 is what is left of the one after the other, and it shrinks each
 time the codec takes on another bound the unpacked form does not owe.
 
 ## Why this exists
