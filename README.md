@@ -388,3 +388,55 @@ the remappings, so re-run it after any edit to that table.
 
 That is the order CI runs in: the shared `rainix-sol` workflow installs soldeer
 dependencies before `slither`, `forge fmt`, `forge lint` and `forge test`.
+
+## Releasing
+
+Published to the Soldeer registry as `rain-lib-leakybucket` by
+`.github/workflows/package-release.yaml`, which calls rainix's
+`rainix-autopublish` on every push to `main`. Nothing publishes from a tag, from
+another branch, or from a local machine. The contract in full is the rainix
+README's "Release lifecycle"; below is what a maintainer of this repo owes it.
+
+A run publishes only if the packaged content changed against the newest
+published revision, and only once every other workflow run on that same commit
+has finished green.
+
+**The version is a patch bump unless a tag says otherwise.** It is derived as
+
+```
+max(patch_bump(newest published), highest next-v<x.y.z> merged into HEAD)
+```
+
+Nothing infers semver from a diff. Widening `LEAKY_BUCKET_TIMESTAMP_BITS`, or
+changing the parameters of `LeakyBucketCapacityExceeded`, publishes as `0.1.1`
+and consumers on a patch range take it silently. A breaking change needs an
+intent tag on its own commit, pushed _before_ that commit merges:
+
+```
+git tag next-v0.2.0 <commit>
+git push origin next-v0.2.0
+```
+
+Breaking here means anything a consumer compiles against or decodes: the packed
+word layout and its width constants, any error's signature, the name or
+parameters of any `internal` function, and the `rain-math-saturating` revision
+`src/` imports by path.
+
+There are two ways to lose an intent tag, and neither of them goes red.
+
+- Pushing it after the merge. The gate reads `git tag --merged HEAD` in the run
+  that publishes, so a tag that lands afterwards raises whatever merges next
+  instead, mislabelling two versions rather than one. There is no correction
+  after the fact: Soldeer revisions are immutable.
+- Squash- or rebase-merging the pull request it sits on. The tagged commit never
+  becomes an ancestor of `main`, so no run ever sees it. This repository allows
+  squash and rebase merges today, so use a merge commit for any pull request
+  carrying a `next-v` tag.
+
+A first publish needs a `next-v` tag as its seed: with no revision on the
+registry there is nothing to patch-bump and the gate will not guess. This repo's
+seed was `next-v0.1.0`.
+
+A successful publish pushes a `sol-v<x.y.z>` tag onto the published commit and
+creates a GitHub release on that tag. Those two are the release record; the
+publish never writes to `main`.
