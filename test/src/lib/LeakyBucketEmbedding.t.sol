@@ -63,25 +63,18 @@ contract LeakyBucketEmbeddingTest is Test {
         sCap.mint(1);
     }
 
-    /// The state written back is the state read next block.
+    /// Leak is credited once per second through the write path.
     function testLeakIsCreditedOnceNotPerCall() external {
         vm.prank(ALICE);
         sCap.mint(CAPACITY);
-
-        // Drip a hundred no-op mints across the same second. Each one rewrites
-        // the checkpoint, and none of them may move the level.
-        for (uint256 i = 0; i < 100; i++) {
-            vm.prank(ALICE);
-            sCap.mint(0);
-        }
         assertEq(sCap.level(ALICE), CAPACITY);
 
         // Half the drain time, taken in one step.
         vm.warp(block.timestamp + DRAIN / 2);
         assertEq(sCap.level(ALICE), CAPACITY / 2);
 
-        // The same half hour, taken a second at a time with a checkpoint every
-        // second, lands on exactly the same level.
+        // The same half hour a second at a time, minting exactly one second of
+        // leak each second: every mint fits, and the bucket stays full.
         LeakyBucketMintCap other = new LeakyBucketMintCap();
         other.setPolicy(BOB, CAPACITY, LEAK_RATE);
         vm.warp(1_700_000_000);
@@ -90,10 +83,10 @@ contract LeakyBucketEmbeddingTest is Test {
         for (uint256 i = 0; i < DRAIN / 2; i++) {
             vm.warp(block.timestamp + 1);
             vm.prank(BOB);
-            other.mint(0);
+            other.mint(LEAK_RATE);
         }
-        assertEq(other.level(BOB), CAPACITY / 2);
-        assertEq(other.level(BOB), sCap.level(ALICE));
+        assertEq(other.level(BOB), CAPACITY);
+        assertEq(other.headroom(BOB), 0);
     }
 
     /// Buckets are per minter.
@@ -264,10 +257,11 @@ contract LeakyBucketEmbeddingTest is Test {
 
         uint256 filled = block.timestamp;
 
-        // The clock falls back an hour and ALICE mints nothing at all.
+        // The clock falls back an hour and the bucket still reads full.
         vm.warp(filled - DRAIN);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, CAPACITY, 1));
         vm.prank(ALICE);
-        sCap.mint(0);
+        sCap.mint(1);
 
         // Back at the second of the original mint the bucket is still full.
         // The hour the clock claimed to rewind bought nothing: without the

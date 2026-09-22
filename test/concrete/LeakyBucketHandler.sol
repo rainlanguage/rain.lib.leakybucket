@@ -49,7 +49,7 @@ contract LeakyBucketHandler is Test {
     /// A mint of an arbitrary size, at whatever point in the history the fuzzer
     /// has built up to.
     function mint(uint256 amount) external {
-        amount = bound(amount, 0, capacity);
+        amount = bound(amount, 1, capacity > 0 ? capacity : 1);
         uint256 headroomBefore = CAP.headroom(MINTER);
         uint256 levelBefore = CAP.level(MINTER);
 

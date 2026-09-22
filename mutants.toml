@@ -444,3 +444,14 @@ target = '''
 replacement = '''
         unchecked {
             return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'''
+
+[[mutants]]
+name = "M60 fillAt: zero amount guard removed"
+file = "src/lib/LibLeakyBucket.sol"
+target = '''
+        if (amount == 0) {
+            revert LeakyBucketZeroAmount();
+        }
+'''
+replacement = '''
+'''

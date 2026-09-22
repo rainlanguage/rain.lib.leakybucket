@@ -16,6 +16,9 @@ error LeakyBucketTimestampOverflow(uint256 timestamp);
 /// `level` does not fit the 192 bit level field.
 error LeakyBucketLevelOverflow(uint256 level);
 
+/// `amount` is zero.
+error LeakyBucketZeroAmount();
+
 /// A bucket. The caller stores it; the library never writes it.
 /// @param checkpoint Packed `(level << 64) | timestamp`. Zero is empty.
 /// @param capacity Burst. At most `LEAKY_BUCKET_LEVEL_MAX`.
@@ -57,7 +60,8 @@ library LibLeakyBucket {
     }
 
     /// The level after filling `amount` at `timestamp`. Reverts with
-    /// `LeakyBucketCapacityExceeded` if `amount` is over the headroom.
+    /// `LeakyBucketZeroAmount` on a zero amount and `LeakyBucketCapacityExceeded`
+    /// if `amount` is over the headroom.
     function fillAt(
         uint256 level,
         uint256 checkpoint,
@@ -66,6 +70,9 @@ library LibLeakyBucket {
         uint256 leakRate,
         uint256 amount
     ) private pure returns (uint256) {
+        if (amount == 0) {
+            revert LeakyBucketZeroAmount();
+        }
         uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);
         uint256 headroom = headroomFrom(capacity, levelNow);
         if (amount > headroom) {

@@ -31,6 +31,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
         external
         pure
     {
+        capacity = uint192(bound(capacity, 1, type(uint192).max));
         uint256 filled = fill(LibCheckpointWord.packed(0, timestamp), timestamp, capacity, leakRate, capacity);
         assertEq(LibCheckpointWord.storedLevel(filled), capacity);
         assertEq(headroomAt(filled, timestamp, capacity, leakRate), 0);
@@ -55,7 +56,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
 
     /// After any accepted fill the level is still within the capacity, unless
     /// it was already above it before the fill, which only a capacity cut can
-    /// produce and which only accepts a zero fill anyway.
+    /// produce and which then accepts no fill at all.
     function testLevelNeverEndsAboveCapacity(
         uint192 level,
         uint64 checkpoint,
@@ -66,7 +67,9 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
     ) external pure {
         uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
         uint256 levelNow = levelAt(checkpointWord, timestamp, leakRate);
-        amount = bound(amount, 0, headroomAt(checkpointWord, timestamp, capacity, leakRate));
+        uint256 headroom = headroomAt(checkpointWord, timestamp, capacity, leakRate);
+        vm.assume(headroom > 0);
+        amount = bound(amount, 1, headroom);
         uint256 newLevel = LibCheckpointWord.storedLevel(fill(checkpointWord, timestamp, capacity, leakRate, amount));
         assertLe(newLevel, levelNow > capacity ? levelNow : capacity);
     }

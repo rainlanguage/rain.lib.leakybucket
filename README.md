@@ -112,10 +112,10 @@ policy changed, the bucket's history did not.
 Two properties make policy changes safe to land at an arbitrary moment:
 
 - **Lowering `capacity` below an outstanding level binds immediately.** Headroom
-  reads zero, every non zero fill is rejected, and the bucket leaks down under
-  the new policy until it fits. No migration and no fill is needed to activate
-  it, so between the write landing and the new cap binding there is no window
-  for a minter to slip through.
+  reads zero, every fill is rejected, and the bucket leaks down under the new
+  policy until it fits. No migration and no fill is needed to activate it, so
+  between the write landing and the new cap binding there is no window for a
+  minter to slip through.
 
   That is the only window this library closes. The window _before_ the write is
   governance's, and it is real: a cut queued behind a public timelock is visible
