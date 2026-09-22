@@ -15,7 +15,9 @@ units per second and stops at zero. That is the whole thing.
 Two numbers describe a policy:
 
 - **`capacity`** — the burst. The most that can be minted in one transaction,
-  and the most that can ever be outstanding against the cap at one instant.
+  and, under an unchanged policy, the most that can be outstanding against the
+  cap at one instant. Lowering `capacity` can leave more than that outstanding
+  until it leaks down; see "Governance is yours" below.
 - **`leakRate`** — the sustained rate, in units per second.
 
 ### Before a mint, and after it
