@@ -2,8 +2,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {Test} from "forge-std-1.16.2/src/Test.sol";
-import {LibLeakyBucket, LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
+import {Test, stdError} from "forge-std-1.16.2/src/Test.sol";
+import {
+    LibLeakyBucket,
+    LeakyBucketCapacityExceeded,
+    LEAKY_BUCKET_SECONDS_PER_HOUR,
+    LEAKY_BUCKET_SECONDS_PER_DAY,
+    LEAKY_BUCKET_SECONDS_PER_WEEK
+} from "../../../src/lib/LibLeakyBucket.sol";
 import {LibLeakyBucketSlow} from "../../lib/LibLeakyBucketSlow.sol";
 
 /// Properties of the bucket itself, stated as invariants over the whole input
@@ -22,6 +28,11 @@ contract LibLeakyBucketTest is Test {
         uint256 amount
     ) external pure returns (uint256) {
         return LibLeakyBucket.fillAt(level, checkpoint, timestamp, capacity, leakRate, amount);
+    }
+
+    /// `expectRevert` needs an external call boundary.
+    function externalLeakRatePer(uint256 amountPerPeriod, uint256 period) external pure returns (uint256) {
+        return LibLeakyBucket.leakRatePer(amountPerPeriod, period);
     }
 
     /// Leaking can only ever lower the level, at every input. This is the
@@ -49,9 +60,11 @@ contract LibLeakyBucketTest is Test {
     }
 
     /// An overflowing product is a leak larger than any representable level, so
-    /// the bucket reads empty. The bug this pins is the opposite: a wrapped
-    /// product is a small leak, and a small leak on a full bucket is free
-    /// headroom.
+    /// the bucket reads empty, and empty is the exact answer here rather than a
+    /// conservative one. The bug this pins is a wrapped product: reducing the
+    /// product modulo the word is a SMALLER leak than the truth, which leaves a
+    /// level above the true level and so a cap tighter than the policy. A wrap
+    /// is a bucket that stops draining, not one that hands out free headroom.
     function testLeakOverflowingProductEmptiesBucket(uint256 level, uint256 elapsed, uint256 leakRate) external pure {
         elapsed = bound(elapsed, 1 << 128, type(uint256).max);
         leakRate = bound(leakRate, 1 << 128, type(uint256).max);
@@ -65,6 +78,73 @@ contract LibLeakyBucketTest is Test {
         level = bound(level, 0, type(uint128).max);
         leakRate = bound(leakRate, 0, type(uint128).max);
         assertEq(LibLeakyBucket.leak(level, elapsed, leakRate), LibLeakyBucketSlow.leakSlow(level, elapsed, leakRate));
+    }
+
+    /// The conversion is never faster than the policy, and is off by less than
+    /// one period's worth. Both halves are the point: rounding down is what
+    /// keeps the on chain rate at or under what was approved, and the remainder
+    /// bound is what stops "rounds down" being satisfied by a rate of zero.
+    ///
+    /// Stated over the whole word rather than a narrowed one. Neither product
+    /// can overflow: `rate` is `amountPerPeriod / period`, so `rate * period` is
+    /// at most `amountPerPeriod`, which is where the subtraction gets its floor
+    /// as well.
+    function testLeakRatePerNeverExceedsThePolicy(uint256 amountPerPeriod, uint256 period) external pure {
+        period = bound(period, 1, type(uint256).max);
+        uint256 rate = LibLeakyBucket.leakRatePer(amountPerPeriod, period);
+        assertLe(rate * period, amountPerPeriod);
+        assertLt(amountPerPeriod - rate * period, period);
+    }
+
+    /// A period of zero panics on the division rather than answering. A rate
+    /// per no time is not a slower rate or a faster one, so there is nothing to
+    /// saturate toward and no conservative direction to pick. This is the one
+    /// argument in the library that is a policy being written down rather than
+    /// bucket state or a clock, so zero is a caller bug and is treated as one.
+    function testLeakRatePerZeroPeriodPanics(uint256 amountPerPeriod) external {
+        vm.expectRevert(stdError.divisionError);
+        this.externalLeakRatePer(amountPerPeriod, 0);
+    }
+
+    /// The constants are the seconds they name, and they nest the way the
+    /// calendar does. A wrong one here is the whole hazard the helper exists to
+    /// remove, and it would be invisible on chain.
+    function testSecondsPerPeriodConstants() external pure {
+        assertEq(LEAKY_BUCKET_SECONDS_PER_HOUR, 60 * 60);
+        assertEq(LEAKY_BUCKET_SECONDS_PER_DAY, 24 * LEAKY_BUCKET_SECONDS_PER_HOUR);
+        assertEq(LEAKY_BUCKET_SECONDS_PER_WEEK, 7 * LEAKY_BUCKET_SECONDS_PER_DAY);
+    }
+
+    /// The worked policy from the README: 86400 units a day is one unit a
+    /// second, a full day of leak is exactly the day's allowance, and a second
+    /// short of a day leaves exactly one unit behind.
+    function testLeakRatePerDayIsTheDocumentedConversion() external pure {
+        uint256 rate = LibLeakyBucket.leakRatePer(86_400e18, LEAKY_BUCKET_SECONDS_PER_DAY);
+        assertEq(rate, 1e18);
+        assertEq(LibLeakyBucket.leak(86_400e18, LEAKY_BUCKET_SECONDS_PER_DAY, rate), 0);
+        assertEq(LibLeakyBucket.leak(86_400e18, LEAKY_BUCKET_SECONDS_PER_DAY - 1, rate), 1e18);
+    }
+
+    /// The hazard the helper exists to remove, shown as a number. Governance
+    /// approves a million units a day; the per second rate is 11574074074074074
+    /// and change, and typing the daily figure into the per second slot is a
+    /// bucket that drains 86400 times too fast. A full capacity refills in
+    /// well under one block, so the sustained limit is gone while the burst,
+    /// every read and every revert still look exactly right.
+    function testLeakRatePerIsTheDifferenceBetweenAPolicyAndNoPolicy() external pure {
+        uint256 amountPerDay = 1_000_000e18;
+        uint256 capacity = 100_000e18;
+        uint256 correct = LibLeakyBucket.leakRatePer(amountPerDay, LEAKY_BUCKET_SECONDS_PER_DAY);
+        assertEq(correct, 11_574_074_074_074_074_074);
+
+        // At the correct rate a drained burst of a tenth of the daily
+        // allowance takes a tenth of a day to come back: 8640 seconds, plus
+        // one, because a rate rounded down is a hair slower than the policy
+        // and the wait rounds up to whole seconds. That is the policy working.
+        assertEq(LibLeakyBucket.fillableAt(capacity, 0, 0, capacity, correct, capacity), 8641);
+
+        // At the mistyped rate it is back within the same second.
+        assertEq(LibLeakyBucket.fillableAt(capacity, 0, 0, capacity, amountPerDay, capacity), 1);
     }
 
     /// A clock at or behind the checkpoint credits no leak. Not a revert, which
@@ -248,7 +328,34 @@ contract LibLeakyBucketTest is Test {
     }
 
     /// `fillableAt` names the earliest second the amount fits: it fits then,
-    /// and it did not fit a second earlier.
+    /// and it did not fit a second earlier. Where it names never, never is
+    /// true.
+    ///
+    /// The sentinel used to be returned from unasserted, which made the one
+    /// general test of this function blind to exactly the value in question.
+    /// A `fillableAt` that answered never too readily satisfied every
+    /// assertion in the suite, because the test walked away the moment the
+    /// answer was `type(uint256).max`.
+    ///
+    /// The sentinel is in band, so `type(uint256).max` coming back is not on
+    /// its own a claim of never. It is also the honest answer "now" for a
+    /// caller whose own clock is the last second the word can name, since a
+    /// fit at `timestamp` returns `timestamp`. That collision is separated
+    /// here rather than assumed away: where the amount fits at `timestamp`
+    /// the answer is now and the clock has to be the top of the word, and
+    /// only where it does not fit is never asserted.
+    ///
+    /// Never is then checked one second below the top of the word rather than
+    /// at it, because an arrival of exactly `type(uint256).max` is
+    /// representable: the saturating add returns the sentinel both for a wait
+    /// landing exactly on the last second and for one landing past the end of
+    /// it, so asserting the amount does not fit at `type(uint256).max` would
+    /// be asserting a defect. At `type(uint256).max - 1` there is no
+    /// ambiguity, whichever route produced the sentinel. An amount larger
+    /// than the capacity fits nowhere. A zero rate holds the headroom fixed
+    /// forever, so a non fitting amount never fits. A saturated arrival is at
+    /// the earliest `type(uint256).max` itself, which is later than the
+    /// second being asked about.
     function testFillableAtIsTheEarliestFittingSecond(
         uint256 level,
         uint256 checkpoint,
@@ -259,6 +366,14 @@ contract LibLeakyBucketTest is Test {
     ) external pure {
         uint256 at = LibLeakyBucket.fillableAt(level, checkpoint, timestamp, capacity, leakRate, amount);
         if (at == type(uint256).max) {
+            if (amount <= LibLeakyBucket.headroomAt(level, checkpoint, timestamp, capacity, leakRate)) {
+                // Not never. The amount fits at `timestamp`, so the answer is
+                // `timestamp`, and the only clock that answer can collide with
+                // the sentinel at is the top of the word.
+                assertEq(timestamp, type(uint256).max);
+                return;
+            }
+            assertGt(amount, LibLeakyBucket.headroomAt(level, checkpoint, type(uint256).max - 1, capacity, leakRate));
             return;
         }
 
@@ -271,7 +386,10 @@ contract LibLeakyBucketTest is Test {
     }
 
     /// An amount larger than the capacity never fits, however long anyone
-    /// waits, and a bucket that does not drain never makes room.
+    /// waits. That is the only claim this test makes: `leakRate` is
+    /// unconstrained here, but `amount > capacity` short circuits before the
+    /// zero rate branch is reached, so nothing about a bucket that does not
+    /// drain is exercised by any input to this test.
     function testFillableAtNeverForImpossibleAmounts(
         uint256 level,
         uint256 checkpoint,
@@ -341,5 +459,51 @@ contract LibLeakyBucketTest is Test {
         assertEq(LibLeakyBucket.levelAt(level, checkpoint, checkpoint + 514, 7e18), 2e18);
         assertLt(LibLeakyBucket.headroomAt(level, checkpoint, checkpoint + 514, capacity, 7e18), capacity);
         assertEq(LibLeakyBucket.headroomAt(level, checkpoint, odd, capacity, 7e18), capacity);
+    }
+
+    /// `fillableAt` documents three routes to the `type(uint256).max` "never"
+    /// sentinel. Only one of them, the amount being larger than the capacity,
+    /// has a test of its own. The other two are worked here, deterministically,
+    /// because the general fuzz test above cannot reach them: it returns the
+    /// instant the answer is the sentinel, so every sentinel it produces is
+    /// discarded without an assertion.
+    ///
+    /// The contrast cases matter as much as the sentinels. Without them
+    /// "never" is only ever asserted where it is correct, and a function that
+    /// answered never too readily would satisfy every one of these.
+    function testFillableAtNeverWhenTheBucketCannotGetThere() external pure {
+        uint256 capacity = 3600e18;
+        uint256 level = 3600e18;
+        uint256 checkpoint = 1000;
+
+        // Route two: a bucket that does not drain never makes room. One unit
+        // is well inside the capacity, so nothing but the zero rate can be
+        // what makes this never.
+        assertEq(LibLeakyBucket.fillableAt(level, checkpoint, checkpoint, capacity, 0, 1), type(uint256).max);
+
+        // Contrast: even at a zero rate a zero amount fits now, because zero
+        // fits in no room at all. So the sentinel above is about the rate and
+        // not a blanket refusal from a full bucket.
+        assertEq(LibLeakyBucket.fillableAt(level, checkpoint, checkpoint, capacity, 0, 0), checkpoint);
+
+        // Contrast: the same full bucket at the slowest non zero rate there is
+        // has a real answer, one second out. So the sentinel above is about
+        // the rate being zero and not about the rate being small.
+        assertEq(LibLeakyBucket.fillableAt(level, checkpoint, checkpoint, capacity, 1, 1), checkpoint + 1);
+
+        // Route three: the wait is real but the arrival leaves the word, and
+        // saturating the add reports never rather than wrapping to a second in
+        // the past. Draining a full 3600e18 bucket at one unit a second takes
+        // 3600e18 seconds, from a checkpoint ten seconds short of the top of
+        // the word.
+        uint256 lateCheckpoint = type(uint256).max - 10;
+        assertEq(
+            LibLeakyBucket.fillableAt(level, lateCheckpoint, lateCheckpoint, capacity, 1, capacity), type(uint256).max
+        );
+
+        // And it is never rather than a reachable answer the saturation hid.
+        // The last second the word can name has leaked ten units, so a full
+        // capacity still does not fit there.
+        assertEq(LibLeakyBucket.headroomAt(level, lateCheckpoint, type(uint256).max, capacity, 1), 10);
     }
 }
