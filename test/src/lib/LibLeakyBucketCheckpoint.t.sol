@@ -53,6 +53,10 @@ contract LibLeakyBucketCheckpointTest is Test {
         LibLeakyBucketCheckpoint.checkCapacity(capacity);
     }
 
+    function externalCheckTimestamp(uint256 timestamp) external pure {
+        LibLeakyBucketCheckpoint.checkTimestamp(timestamp);
+    }
+
     /// Every packable pair survives the round trip.
     function testPackUnpackRoundTrip(uint192 level, uint64 timestamp) external pure {
         (uint256 unpackedLevel, uint256 unpackedTimestamp) =
@@ -130,9 +134,15 @@ contract LibLeakyBucketCheckpointTest is Test {
             LibLeakyBucketCheckpoint.headroomAt(packed, timestamp, capacity, leakRate),
             LibLeakyBucket.headroomAt(level, checkpoint, timestamp, capacity, leakRate)
         );
+        // `fillableAt` is the core's answer narrowed to this codec's horizon:
+        // the core has the whole word to name a second in, the packed field has
+        // sixty four bits, and a second the field cannot hold is one `fill` can
+        // never be called at — never rather than a date. Everything inside the
+        // horizon is the core's answer unchanged.
+        uint256 coreFillableAt = LibLeakyBucket.fillableAt(level, checkpoint, timestamp, capacity, leakRate, amount);
         assertEq(
             LibLeakyBucketCheckpoint.fillableAt(packed, timestamp, capacity, leakRate, amount),
-            LibLeakyBucket.fillableAt(level, checkpoint, timestamp, capacity, leakRate, amount)
+            coreFillableAt > LEAKY_BUCKET_TIMESTAMP_MAX ? type(uint256).max : coreFillableAt
         );
     }
 
@@ -403,5 +413,123 @@ contract LibLeakyBucketCheckpointTest is Test {
             LibLeakyBucketCheckpoint.fill(packed, timestamp, capacity, leakRate, headroom)
         );
         assertLe(newLevel, LEAKY_BUCKET_LEVEL_MAX);
+    }
+
+    /// The rule every packed entry point that makes a claim about `fill` obeys,
+    /// stated once and fuzzed over the UNBOUNDED input space rather than over
+    /// `uint64`/`uint192` parameters that assume the bounds instead of checking
+    /// them: a read answers exactly where `fill` acts, and refuses exactly what
+    /// `fill` refuses, with the same error carrying the same argument.
+    ///
+    /// The `capacity` half of this was already true and is re-derived here. The
+    /// `timestamp` half was not: every other fuzz test in this file declares
+    /// `uint64 timestamp`, so the entire region where the reads used to answer
+    /// and `fill` used to revert was excluded from the suite by the parameter
+    /// type. A future packed field whose bound is guarded at one entry point
+    /// and forgotten at another fails here.
+    ///
+    /// `levelAt` is deliberately absent. It takes no `capacity` and makes no
+    /// claim about `fill`, so it has nothing to disagree with.
+    function testPackedEntryPointsAnswerOnExactlyTheFillableDomain(
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
+        uint256 leakRate
+    ) external {
+        if (capacity > LEAKY_BUCKET_LEVEL_MAX) {
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+            this.externalCheckCapacity(capacity);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+            this.externalHeadroomAt(checkpoint, timestamp, capacity, leakRate);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+            this.externalFillableAt(checkpoint, timestamp, capacity, leakRate, 0);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+            this.externalFill(checkpoint, timestamp, capacity, leakRate, 0);
+            return;
+        }
+
+        if (timestamp > LEAKY_BUCKET_TIMESTAMP_MAX) {
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+            this.externalCheckTimestamp(timestamp);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+            this.externalHeadroomAt(checkpoint, timestamp, capacity, leakRate);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+            this.externalFillableAt(checkpoint, timestamp, capacity, leakRate, 0);
+            // A zero amount fits in every bucket, at or over capacity alike, so
+            // the only thing left that can stop this fill is the second it was
+            // asked to record.
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+            this.externalFill(checkpoint, timestamp, capacity, leakRate, 0);
+            return;
+        }
+
+        // Inside the domain every one of them answers, and what `headroomAt`
+        // names is what `fill` takes.
+        uint256 headroom = LibLeakyBucketCheckpoint.headroomAt(checkpoint, timestamp, capacity, leakRate);
+        LibLeakyBucketCheckpoint.fillableAt(checkpoint, timestamp, capacity, leakRate, headroom);
+        LibLeakyBucketCheckpoint.fill(checkpoint, timestamp, capacity, leakRate, headroom);
+    }
+
+    /// Both sides of the codec's horizon, one second apart, pinned as literals
+    /// because a boundary is not something to leave to a fuzzer.
+    ///
+    /// A bucket holding `LEAKY_BUCKET_TIMESTAMP_MAX` units at the epoch,
+    /// leaking one unit a second, asked when the widest storable capacity would
+    /// fit: it has to empty completely first, which takes exactly
+    /// `LEAKY_BUCKET_TIMESTAMP_MAX` seconds. That is the last second this codec
+    /// can record, so it is an answer, and `fill` honours it there.
+    ///
+    /// One unit more in the bucket and the wait is one second longer, which is
+    /// a second the codec cannot record and `fill` can therefore never be
+    /// called at. That is never, not a date. And it really is never: at the
+    /// last recordable second the amount is still one unit too big.
+    function testFillableAtIsClampedExactlyAtTheHorizon() external {
+        uint256 capacity = LEAKY_BUCKET_LEVEL_MAX;
+
+        uint256 atHorizon = LibLeakyBucketCheckpoint.pack(LEAKY_BUCKET_TIMESTAMP_MAX, 0);
+        assertEq(LibLeakyBucketCheckpoint.fillableAt(atHorizon, 0, capacity, 1, capacity), LEAKY_BUCKET_TIMESTAMP_MAX);
+        LibLeakyBucketCheckpoint.fill(atHorizon, LEAKY_BUCKET_TIMESTAMP_MAX, capacity, 1, capacity);
+
+        uint256 pastHorizon = LibLeakyBucketCheckpoint.pack(LEAKY_BUCKET_TIMESTAMP_MAX + 1, 0);
+        assertEq(LibLeakyBucketCheckpoint.fillableAt(pastHorizon, 0, capacity, 1, capacity), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, 1, capacity));
+        this.externalFill(pastHorizon, LEAKY_BUCKET_TIMESTAMP_MAX, capacity, 1, capacity);
+
+        // The core, which has the whole word to name a second in, does answer
+        // with that date. The narrowing is the codec's, and it is the codec's
+        // because the codec is the one that has to write the second down.
+        assertEq(
+            LibLeakyBucket.fillableAt(LEAKY_BUCKET_TIMESTAMP_MAX + 1, 0, 0, capacity, 1, capacity),
+            LEAKY_BUCKET_TIMESTAMP_MAX + 1
+        );
+    }
+
+    /// `fillableAt` and `fill` agree at every input, in both directions.
+    ///
+    /// Whatever second it names is one the codec can record and one at which
+    /// `fill` takes the amount it was asked about — so a scheduler or a
+    /// frontend acting on the answer can always execute it. And whenever it
+    /// says never, never is the truth rather than a clamp hiding a real wait:
+    /// at the last second the codec can record, the amount still does not fit.
+    function testPackedFillableAtIsASecondFillHonours(
+        uint192 level,
+        uint64 checkpoint,
+        uint64 timestamp,
+        uint192 capacity,
+        uint256 leakRate,
+        uint256 amount
+    ) external {
+        uint256 packed = LibLeakyBucketCheckpoint.pack(level, checkpoint);
+        uint256 at = LibLeakyBucketCheckpoint.fillableAt(packed, timestamp, capacity, leakRate, amount);
+
+        if (at == type(uint256).max) {
+            uint256 levelThen = LibLeakyBucketCheckpoint.levelAt(packed, LEAKY_BUCKET_TIMESTAMP_MAX, leakRate);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, levelThen, amount));
+            this.externalFill(packed, LEAKY_BUCKET_TIMESTAMP_MAX, capacity, leakRate, amount);
+            return;
+        }
+
+        assertLe(at, LEAKY_BUCKET_TIMESTAMP_MAX);
+        LibLeakyBucketCheckpoint.fill(packed, at, capacity, leakRate, amount);
     }
 }
