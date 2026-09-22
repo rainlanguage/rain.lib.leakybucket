@@ -3,6 +3,7 @@ version = 1
 [[annotations]]
 path = [
   ".github/workflows/**/",
+  "audit/**",
   ".gitignore",
   "README.md",
   "flake.lock",

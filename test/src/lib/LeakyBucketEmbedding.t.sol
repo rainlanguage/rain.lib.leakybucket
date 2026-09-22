@@ -5,6 +5,7 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {LeakyBucketMintCap} from "../../lib/LeakyBucketMintCap.sol";
 import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
+import {LeakyBucketCapacityOverflow, LEAKY_BUCKET_LEVEL_MAX} from "../../../src/lib/LibLeakyBucketCheckpoint.sol";
 
 /// The library under a real storage layout and a real clock, which is where the
 /// mistakes that pure function tests cannot see would show up: state written
@@ -216,5 +217,60 @@ contract LeakyBucketEmbeddingTest is Test {
 
         assertEq(minted, cap.totalMinted());
         assertLe(minted, CAPACITY + (block.timestamp - start) * LEAK_RATE);
+    }
+
+    /// A clock that steps backwards banks no credit, through real storage.
+    ///
+    /// `block.timestamp` is monotonic within a chain, so this is not reachable
+    /// from the embedding above; it is reachable the moment a concrete feeds
+    /// the library a time from anywhere else, which the API permits and this
+    /// library is chain agnostic enough to have to survive. The mint at the
+    /// stale second is a checkpoint and nothing else, and the bucket must read
+    /// at every later second exactly as it would have if that call had never
+    /// happened.
+    function testBackwardsClockBanksNoCredit() external {
+        vm.prank(ALICE);
+        cap.mint(CAPACITY);
+        assertEq(cap.level(ALICE), CAPACITY);
+
+        uint256 filled = block.timestamp;
+
+        // The clock falls back an hour and ALICE mints nothing at all.
+        vm.warp(filled - 3600);
+        vm.prank(ALICE);
+        cap.mint(0);
+
+        // Back at the second of the original mint the bucket is still full.
+        // The hour the clock claimed to rewind bought nothing: without the
+        // guard the stored checkpoint would have moved back with it and this
+        // would read as an empty bucket with a whole capacity on offer.
+        vm.warp(filled);
+        assertEq(cap.level(ALICE), CAPACITY);
+        assertEq(cap.headroom(ALICE), 0);
+
+        // And one real hour later it is one capacity, not two hours of leak.
+        vm.warp(filled + 3600);
+        assertEq(cap.headroom(ALICE), CAPACITY);
+        vm.prank(ALICE);
+        cap.mint(CAPACITY);
+        assertEq(cap.totalMinted(), CAPACITY * 2);
+    }
+
+    /// A capacity wider than the packed level field is refused where governance
+    /// sets it, rather than discovered at mint time by whoever is unlucky
+    /// enough to be minting when it first binds.
+    function testGovernanceCannotSetAnUnenforceableCapacity() external {
+        uint256 capacity = LEAKY_BUCKET_LEVEL_MAX + 1;
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+        cap.setPolicy(ALICE, capacity, LEAK_RATE);
+
+        // ALICE keeps the policy she had, so a refused change is inert rather
+        // than half applied.
+        assertEq(cap.headroom(ALICE), CAPACITY);
+
+        // The widest capacity the codec can store is settable and binds.
+        cap.setPolicy(BOB, LEAKY_BUCKET_LEVEL_MAX, LEAK_RATE);
+        assertEq(cap.headroom(BOB), LEAKY_BUCKET_LEVEL_MAX);
     }
 }
