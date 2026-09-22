@@ -284,16 +284,17 @@ library LibLeakyBucket {
         if (amount <= LibSaturatingMath.saturatingSub(capacity, levelNow)) {
             return timestamp;
         }
-        uint256 target;
-        unchecked {
-            // `amount <= capacity` was checked above, so this cannot underflow.
-            target = capacity - amount;
-        }
+        // A bucket that does not drain never makes room for an amount that does
+        // not already fit, so this is "never" however far short it is. Tested
+        // before the target is worked out, because it does not depend on the
+        // target: the cheaper and more general answer comes first.
         if (leakRate == 0) {
             return type(uint256).max;
         }
         uint256 wait;
         unchecked {
+            // `amount <= capacity` was checked above, so this cannot underflow.
+            uint256 target = capacity - amount;
             // `levelNow > target` so the deficit is at least one, the ceiling
             // division below cannot underflow, and the quotient is at most
             // `deficit - 1` so the increment cannot overflow.
