@@ -780,11 +780,20 @@ contract LibLeakyBucketCheckpointTest is Test {
         (uint256 codecLevel, uint256 codecCheckpoint) = LibLeakyBucketCheckpoint.unpack(codec);
         assertEq(codecLevel, forgetfulLevel);
 
+        uint256 delta = codecCheckpoint - checkpoint;
+
+        // The fast forwarded read is `readAt + delta`, and the codec answers
+        // only over seconds it can record, so keep the sum inside that width.
+        // Before the codec guarded its timestamp domain this test could read at
+        // any second; now an unpackable one reverts rather than answering, and
+        // the law being asserted here is about the two buckets agreeing, not
+        // about what happens outside the domain either can represent.
+        readAt = uint64(bound(readAt, 0, LEAKY_BUCKET_TIMESTAMP_MAX - delta));
+
         uint256 forgetfulHeadroom = LibLeakyBucket.headroomAt(forgetfulLevel, checkpoint, readAt, capacity, leakRate);
 
         assertGe(forgetfulHeadroom, LibLeakyBucketCheckpoint.headroomAt(codec, readAt, capacity, leakRate));
 
-        uint256 delta = codecCheckpoint - checkpoint;
         assertEq(forgetfulHeadroom, LibLeakyBucketCheckpoint.headroomAt(codec, readAt + delta, capacity, leakRate));
     }
 }

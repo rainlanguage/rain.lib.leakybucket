@@ -87,8 +87,8 @@ contract LibLeakyBucketGasTest is Test {
         // stored checkpoint from going backwards. Together they are worth ~78
         // gas, and `UnpackedBucket` buys neither, because a level kept in a
         // whole word has no packed width to exceed.
-        assertGt(unpackedGas - packedGas, 1_800);
-        assertLt(unpackedGas - packedGas, 2_100);
+        assertGt(unpackedGas - packedGas, 1_550);
+        assertLt(unpackedGas - packedGas, 1_800);
     }
 
     /// One slot against two, on the extra `SSTORE`.
