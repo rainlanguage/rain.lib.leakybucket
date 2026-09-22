@@ -4,6 +4,9 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {LibLeakyBucket, LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
+import {LibSaturatingMath} from "rain-math-saturating-0.1.10/src/lib/LibSaturatingMath.sol";
+import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
+import {LeakyBucketExternal} from "../../abstract/LeakyBucketExternal.sol";
 
 /// What `capacity` does and does not bound.
 ///
@@ -15,41 +18,23 @@ import {LibLeakyBucket, LeakyBucketCapacityExceeded} from "../../../src/lib/LibL
 /// is cumulative throughput over time, because a leak that did not let more
 /// through over time would not be a leak. Both halves are asserted here so
 /// neither can be changed silently.
-contract CapacityBoundTest is Test {
-    /// A worked policy: a 3600 unit burst draining at one unit per second, so a
-    /// full bucket empties in exactly an hour.
-    uint256 internal constant CAPACITY = 3600e18;
-    uint256 internal constant LEAK_RATE = 1e18;
-    uint256 internal constant DRAIN = 3600;
+contract CapacityBoundTest is Test, LeakyBucketExternal {
+    /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`:
+    /// a 3600 unit burst draining at one unit per second, so a full bucket
+    /// empties in exactly an hour. `DRAIN` is the quotient of the other two
+    /// rather than a restated literal, so it cannot come to mean anything but
+    /// "one full drain".
+    uint256 internal constant CAPACITY = WORKED_CAPACITY;
+    uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
+    uint256 internal constant DRAIN = WORKED_DRAIN;
 
-    /// `expectRevert` needs an external call boundary.
-    function externalFillAt(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        uint256 capacity,
-        uint256 leakRate,
-        uint256 amount
-    ) external pure returns (uint256) {
-        return LibLeakyBucket.fillAt(level, checkpoint, timestamp, capacity, leakRate, amount);
-    }
-
-    /// Idling accrues NO credit beyond the capacity. However long a bucket sits
-    /// untouched, the most it can ever offer is one full capacity. There is no
-    /// input that lets waiting bank more than that.
-    function testIdlingAccruesNoCreditBeyondCapacity(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        uint256 capacity,
-        uint256 leakRate
-    ) external pure {
-        assertLe(LibLeakyBucket.headroomAt(level, checkpoint, timestamp, capacity, leakRate), capacity);
-    }
-
-    /// The same thing on the worked policy, at a wait long enough that a
-    /// design which banked credit would be obvious: a thousand drain times of
-    /// idling still offers exactly one capacity, not a thousand.
+    /// Idling accrues NO credit beyond the capacity: however long a bucket sits
+    /// untouched, the most it can ever offer is one full capacity, and there is
+    /// no input that lets waiting bank more than that. This is the worked-policy
+    /// form of it, at a wait long enough that a design which banked credit would
+    /// be obvious — a thousand drain times of idling still offers exactly one
+    /// capacity, not a thousand. The general form, over arbitrary inputs, is
+    /// `testHeadroomAtNeverExceedsCapacity` in `LibLeakyBucket.t.sol`.
     function testIdleForAThousandDrainTimesStillOffersOneCapacity() external pure {
         assertEq(LibLeakyBucket.headroomAt(0, 0, DRAIN * 1000, CAPACITY, LEAK_RATE), CAPACITY);
     }
@@ -153,6 +138,23 @@ contract CapacityBoundTest is Test {
         uint256 levelLater = LibLeakyBucket.levelAt(level, checkpoint, later, leakRate);
         // Monotonic in time, so this cannot underflow.
         assertLe(levelEarlier - levelLater, capacity);
+
+        // The identity the docstring names, asserted rather than implied. The
+        // bound above cannot fail on its own: `bound(level, 0, capacity)` makes
+        // `<= capacity` true for any leak that does not RAISE the level, which
+        // `testLeakNeverRaisesLevel` pins, so the only thing left for it to
+        // catch is a non-monotonic leak underflowing the subtraction, which
+        // `testLevelAtMonotonicInTime` catches already. What neither pins is
+        // the SIZE of the leak, and the size is what decides whether the cap
+        // converges to the rate the policy names or to something slacker.
+        //
+        // Credited leak is exactly `min(level, elapsed * leakRate)`, with
+        // `elapsed` taken from the checkpoint and saturating at zero behind it.
+        // `testLeakIsExactWhereItCannotOverflow` states this for levels up to
+        // `uint128` and products that cannot overflow; here it is stated over
+        // the whole word, where both saturations bite.
+        uint256 product = LibSaturatingMath.saturatingMul(LibSaturatingMath.saturatingSub(later, checkpoint), leakRate);
+        assertEq(level - levelLater, product < level ? product : level);
     }
 
     /// Consuming the bucket zeroes it immediately, in the same second, not
