@@ -123,6 +123,12 @@ it was asked about would be accepted. Neither answers at all for a `capacity`
 the codec cannot enforce, because any answer there would be a promise `fill`
 would break.
 
+The one promise they do not police is the time field. Both answer for a
+`timestamp` above `LEAKY_BUCKET_TIMESTAMP_MAX`, and `fillableAt` can name a
+second above it, where `fill` reverts `LeakyBucketTimestampOverflow` rather than
+accepting. So that is the one input at which the reads and `fill` disagree — and
+it is ~5.8e11 years out, which is not a second `block.timestamp` can hand you.
+
 ### The pure core
 
 `LibLeakyBucketCheckpoint` is the packed convenience layer over
