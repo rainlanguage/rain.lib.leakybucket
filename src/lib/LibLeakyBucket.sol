@@ -347,6 +347,17 @@ library LibLeakyBucket {
     /// wait is real but the arrival time saturates the word, which is
     /// indistinguishable from never for any purpose.
     ///
+    /// There is a fourth way to get that value back, and it is NOT never: at
+    /// `timestamp == type(uint256).max`, an amount that already fits returns
+    /// `timestamp` itself, which is the sentinel. The sentinel is therefore in
+    /// band, and a caller reading `== type(uint256).max` as "never" is wrong at
+    /// exactly that one second. Distinguish the two by asking whether the
+    /// amount fits now — `headroomAt(...) >= amount` — which is the same
+    /// question `fillAt` answers, and is the reason this is documented rather
+    /// than signalled out of band: no clock reaches the top of the word, so
+    /// widening the return to carry a flag would cost every caller a value they
+    /// can already compute for an input none of them has.
+    ///
     /// This is a view for callers and frontends. It is not consulted by
     /// `fillAt` and nothing in the enforcement path depends on it.
     /// @param level The level recorded at the checkpoint.

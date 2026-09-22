@@ -495,4 +495,27 @@ contract LibLeakyBucketTest is Test, LeakyBucketExternal {
         // capacity still does not fit there.
         assertEq(LibLeakyBucket.headroomAt(level, lateCheckpoint, type(uint256).max, capacity, 1), 10);
     }
+
+    /// The sentinel is in band at the top of the word, and both readings are
+    /// pinned here because the docstring now promises exactly this.
+    ///
+    /// At `timestamp == type(uint256).max` the answer `type(uint256).max` means
+    /// NOW when the amount fits and NEVER when it does not. The two are
+    /// indistinguishable from the return value alone, which is why the
+    /// docstring tells a caller to ask `headroomAt` instead, and why that
+    /// question separates them here.
+    function testFillableAtSentinelIsInBandAtTheTopOfTheWord() external pure {
+        uint256 top = type(uint256).max;
+        uint256 capacity = 3600e18;
+
+        // Fits now. The answer is `timestamp`, which happens to be the
+        // sentinel, and `headroomAt` says so.
+        assertEq(LibLeakyBucket.fillableAt(0, top, top, capacity, 1e18, capacity), top);
+        assertGe(LibLeakyBucket.headroomAt(0, top, top, capacity, 1e18), capacity);
+
+        // Does not fit, and never will, because the bucket does not drain. Same
+        // returned value, opposite meaning, and `headroomAt` separates them.
+        assertEq(LibLeakyBucket.fillableAt(capacity, top, top, capacity, 0, capacity), top);
+        assertLt(LibLeakyBucket.headroomAt(capacity, top, top, capacity, 0), capacity);
+    }
 }
