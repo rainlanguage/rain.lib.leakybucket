@@ -49,9 +49,11 @@ contract LibLeakyBucketTest is Test {
     }
 
     /// An overflowing product is a leak larger than any representable level, so
-    /// the bucket reads empty. The bug this pins is the opposite: a wrapped
-    /// product is a small leak, and a small leak on a full bucket is free
-    /// headroom.
+    /// the bucket reads empty, and empty is the exact answer here rather than a
+    /// conservative one. The bug this pins is a wrapped product: reducing the
+    /// product modulo the word is a SMALLER leak than the truth, which leaves a
+    /// level above the true level and so a cap tighter than the policy. A wrap
+    /// is a bucket that stops draining, not one that hands out free headroom.
     function testLeakOverflowingProductEmptiesBucket(uint256 level, uint256 elapsed, uint256 leakRate) external pure {
         elapsed = bound(elapsed, 1 << 128, type(uint256).max);
         leakRate = bound(leakRate, 1 << 128, type(uint256).max);
