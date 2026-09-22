@@ -75,11 +75,12 @@ name, so any other revision of `rain-math-saturating` is remapped under a
 different prefix and the import does not resolve.
 
 A bucket is a `LeakyBucket`: the packed checkpoint word, the `capacity` and the
-`leakRate`. Put one wherever a bucket is needed — a mapping by minter, a mapping
-by pair, a single slot — and hand it to `fill`, which reads the three fields and
-writes the checkpoint back itself. A zero checkpoint is an empty bucket at the
-epoch and a zero capacity is a closed door, so an untouched mapping entry is
-already a valid bucket that can mint nothing, and no initializer is needed.
+`leakRate`. Store one wherever a bucket is needed — a mapping by minter, a
+mapping by pair, a single slot — hand it to `fill`, and store the checkpoint
+`fill` returns. The library is `pure`; the storage is yours. A zero checkpoint
+is an empty bucket at the epoch and a zero capacity is a closed door, so an
+untouched mapping entry is already a valid bucket that can mint nothing, and no
+initializer is needed.
 
 ```solidity
 import {LibLeakyBucket, LeakyBucket} from "rain-lib-leakybucket-x.y.z/src/lib/LibLeakyBucket.sol";
@@ -88,16 +89,15 @@ contract Token {
     mapping(address minter => LeakyBucket bucket) internal sBuckets;
 
     function mint(address to, uint256 amount) external {
-        LibLeakyBucket.fill(sBuckets[msg.sender], block.timestamp, amount);
+        sBuckets[msg.sender].checkpoint = LibLeakyBucket.fill(sBuckets[msg.sender], block.timestamp, amount);
         _mint(to, amount);
     }
 }
 ```
 
-Three `SLOAD`s, one library call, one `SSTORE`. The call reverts with
+One library call, one `SSTORE`. The call reverts with
 `LeakyBucketCapacityExceeded(capacity, level, amount)` if the amount does not
-fit, and nothing is written. There is no returned word to store and so no way to
-store it against the wrong key.
+fit, and then nothing is stored.
 
 ### Governance is yours
 
@@ -174,10 +174,9 @@ be: `headroomAt` against a `capacity` of `LEAKY_BUCKET_LEVEL_MAX` is
 `LEAKY_BUCKET_LEVEL_MAX - level` exactly — a level out of a stored word can
 never exceed that bound, so the saturation never bites and the subtraction
 inverts it. `headroomAt` reads the capacity from the bucket it is given, so
-asking at that capacity means asking of a bucket that has it: copy the
-checkpoint and the rate into a scratch `LeakyBucket` with that capacity and read
-there. The test harness does exactly this, and it is a write, so it is not a
-`view`.
+asking at that capacity means asking of a bucket that has it: the same
+checkpoint and rate, in memory, with that capacity. The test harness does
+exactly this.
 
 ## Design notes
 
@@ -291,11 +290,10 @@ policy change rather than a refused mint.
 
 ## Gas
 
-A fill reads the bucket's three fields and writes one. The level and its
-timestamp are one word, which is the point of packing them: the whole state
+A fill reads the bucket's three fields and the caller stores one. The level and
+its timestamp are one word, which is the point of packing them: the whole state
 update is one `SSTORE`, and there is no second write to get wrong. The two
-policy reads are the cost of a bucket being one thing in one place, and they are
-two cold `SLOAD`s that a policy passed as arguments would not pay.
+policy reads are the cost of a bucket being one thing in one place.
 
 `test/src/lib/LibLeakyBucketGas.t.sol` logs the current figures and asserts a
 coarse band around each. Run it for the numbers. They are not reproduced here: a

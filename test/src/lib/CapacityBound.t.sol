@@ -48,13 +48,16 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
     /// be obvious — a thousand drain times of idling still offers exactly one
     /// capacity, not a thousand. The general form, over arbitrary inputs, is
     /// `testHeadroomNeverExceedsCapacity` in `LibLeakyBucket.t.sol`.
-    function testIdleForAThousandDrainTimesStillOffersOneCapacity() external {
+    function testIdleForAThousandDrainTimesStillOffersOneCapacity() external pure {
         assertEq(headroomAt(0, DRAIN * 1000, CAPACITY, LEAK_RATE), CAPACITY);
     }
 
     /// Filling an empty bucket to the top leaves nothing further to mint, at
     /// that instant. "Zero to full" is "zero headroom".
-    function testFillingToCapacityLeavesZeroHeadroom(uint192 capacity, uint256 leakRate, uint64 timestamp) external {
+    function testFillingToCapacityLeavesZeroHeadroom(uint192 capacity, uint256 leakRate, uint64 timestamp)
+        external
+        pure
+    {
         uint256 filled = fill(LibCheckpointWord.packed(0, timestamp), timestamp, capacity, leakRate, capacity);
         assertEq(LibCheckpointWord.storedLevel(filled), capacity);
         assertEq(headroomAt(filled, timestamp, capacity, leakRate), 0);
@@ -87,7 +90,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
         uint192 capacity,
         uint256 leakRate,
         uint256 amount
-    ) external {
+    ) external pure {
         uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
         uint256 levelNow = levelAt(checkpointWord, timestamp, leakRate);
         amount = bound(amount, 0, headroomAt(checkpointWord, timestamp, capacity, leakRate));
@@ -101,7 +104,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
     /// makes half a capacity available again. This is the rate limit working,
     /// not the cap leaking: at no instant did the bucket hold more than
     /// `capacity`, and no single mint was larger than `capacity`.
-    function testRefillIsPacedByLeakRateAndCappedAtCapacity() external {
+    function testRefillIsPacedByLeakRateAndCappedAtCapacity() external pure {
         uint256 filled = fill(0, 0, CAPACITY, LEAK_RATE, CAPACITY);
         assertEq(LibCheckpointWord.storedLevel(filled), CAPACITY);
         assertEq(headroomAt(filled, 0, CAPACITY, LEAK_RATE), 0);
@@ -140,7 +143,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
         uint64 earlier,
         uint64 later,
         uint256 leakRate
-    ) external {
+    ) external pure {
         level = uint192(bound(level, 0, capacity));
         later = uint64(bound(later, earlier, type(uint64).max));
         uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
@@ -172,7 +175,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
     /// after some delay and not partially. Whatever happens afterwards is the
     /// refill, and no length of wait offers the next mint more than one
     /// capacity.
-    function testConsumedBucketIsZeroImmediatelyThenRefillsBoundedByCapacity(uint64 elapsed) external {
+    function testConsumedBucketIsZeroImmediatelyThenRefillsBoundedByCapacity(uint64 elapsed) external pure {
         uint256 filled = fill(0, 0, CAPACITY, LEAK_RATE, CAPACITY);
 
         // Immediately: same timestamp, nothing further fits.

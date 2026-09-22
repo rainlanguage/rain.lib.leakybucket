@@ -35,11 +35,12 @@ error LeakyBucketTimestampOverflow(uint256 timestamp);
 /// @param level The level that did not fit.
 error LeakyBucketLevelOverflow(uint256 level);
 
-/// One bucket. Put it wherever a bucket is needed — a mapping by minter, a
-/// mapping by pair, a single slot — and hand it to `fill`.
+/// One bucket. Store it wherever a bucket is needed — a mapping by minter, a
+/// mapping by pair, a single slot — load it, hand it to `fill`, and store the
+/// checkpoint `fill` returns.
 /// @param checkpoint The packed `(level, timestamp)` word. Zero is an empty
 /// bucket checkpointed at the epoch, so an untouched slot needs no initialiser.
-/// `fill` writes it; nothing else should.
+/// Only ever store what `fill` returned.
 /// @param capacity The burst. Must be at or below `LEAKY_BUCKET_LEVEL_MAX`.
 /// @param leakRate The sustained rate, in units per second.
 struct LeakyBucket {
@@ -49,7 +50,7 @@ struct LeakyBucket {
 }
 
 /// @title LibLeakyBucket
-/// @notice A leaky bucket meter over a `LeakyBucket` in the caller's storage:
+/// @notice A leaky bucket meter, pure, over a `LeakyBucket` the caller holds:
 /// one packed word of state and the policy pair beside it.
 ///
 /// The bucket holds a `level`. Filling adds to the level and is rejected if the
@@ -67,10 +68,10 @@ struct LeakyBucket {
 ///
 /// ## The surface is one function
 ///
-/// `fill` is the product. It takes a `LeakyBucket` in the caller's storage, a
-/// clock and an amount, and either reverts or writes the bucket's new
-/// checkpoint. `headroomAt` is the only other entry point and it exists for one
-/// reason, written into its own NatSpec.
+/// `fill` is the product. It takes a `LeakyBucket`, a clock and an amount, and
+/// either reverts or returns the checkpoint to store. `headroomAt` is the only
+/// other entry point and it exists for one reason, written into its own
+/// NatSpec.
 ///
 /// Everything else here is `private`, because everything else here is a step of
 /// `fill` rather than a thing to call. Every exported symbol is one a caller can
@@ -106,13 +107,14 @@ struct LeakyBucket {
 ///
 /// ## State is the caller's
 ///
-/// Both entry points take a `LeakyBucket` in the caller's storage. The library
-/// owns no storage of its own, no slot, no mapping, no owner, no initializer
-/// and no upgrade hook. A concrete contract puts the struct wherever it likes,
-/// under whatever key it likes, and writes `capacity` and `leakRate` into it
-/// from wherever its governance puts them: a constructor, a timelocked setter,
-/// a multi stage upgrade, or a per minter mapping with a different pair per
-/// minter. The library never sees any of that and cannot constrain it.
+/// Both entry points are `pure` over a `LeakyBucket` in memory. The library
+/// owns no storage, no slot, no mapping, no owner, no initializer and no
+/// upgrade hook. A concrete contract stores the struct wherever it likes, under
+/// whatever key it likes, sets `capacity` and `leakRate` from wherever its
+/// governance puts them — a constructor, a timelocked setter, a multi stage
+/// upgrade, a per minter mapping with a different pair per minter — and stores
+/// back the checkpoint `fill` returns. The library never sees any of that and
+/// cannot constrain it.
 ///
 /// The state is one word: the level in the high 192 bits and the timestamp that
 /// level was recorded at in the low 64. Both fields are read with a shift or a
@@ -125,8 +127,9 @@ struct LeakyBucket {
 /// older timestamp in place credits the same leak again on the next call, which
 /// quietly stops the cap binding. It is a one line mistake with no symptom
 /// until it is exploited, which is the worst shape a bug in a mint cap can
-/// have. Here the two are one word and `fill` writes it itself; the caller
-/// never holds it. The failure mode is removed rather than documented.
+/// have. Here the two are one word and `fill` returns it whole; the caller
+/// never holds the halves apart. The failure mode is removed rather than
+/// documented.
 ///
 /// ```solidity
 /// // One bucket per minter, each with its own policy, governed however the
@@ -354,7 +357,7 @@ library LibLeakyBucket {
     /// The returned level belongs to `timestamp`, not to `checkpoint`, except
     /// where `timestamp` is at or behind `checkpoint` and no leak was credited,
     /// in which case it belongs to `checkpoint`. `fill` is what reconciles that
-    /// with the word it writes back.
+    /// with the word it returns.
     ///
     /// An `amount` of zero is accepted whenever the bucket is at or over
     /// capacity as well as under it, because zero fits in zero headroom. It
@@ -522,19 +525,18 @@ library LibLeakyBucket {
     /// @param bucket The bucket.
     /// @param timestamp The timestamp to evaluate the bucket at, in seconds.
     /// @return The amount that would fit at `timestamp`.
-    function headroomAt(LeakyBucket storage bucket, uint256 timestamp) internal view returns (uint256) {
-        uint256 capacity = bucket.capacity;
-        checkFillableDomain(capacity, timestamp);
+    function headroomAt(LeakyBucket memory bucket, uint256 timestamp) internal pure returns (uint256) {
+        checkFillableDomain(bucket.capacity, timestamp);
         (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
-        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));
+        return headroomFrom(bucket.capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));
     }
 
-    /// Fill a bucket with `amount` at `timestamp`, writing its new checkpoint
-    /// back. Reverts with `LeakyBucketCapacityExceeded` if the
+    /// Fill a bucket with `amount` at `timestamp`, returning the new checkpoint
+    /// to store. Reverts with `LeakyBucketCapacityExceeded` if the
     /// amount does not fit, `LeakyBucketCapacityOverflow` if `capacity` is one
     /// this library cannot enforce, or `LeakyBucketTimestampOverflow` if
     /// `timestamp` is past the width of the packed field and so cannot be
-    /// recorded. Nothing is written in any of the three cases, and that
+    /// recorded. Nothing is returned in any of the three cases, and that
     /// list is exhaustive: a `try`/`catch`, or a frontend decoding a failed
     /// simulation, is written from it.
     ///
@@ -542,8 +544,8 @@ library LibLeakyBucket {
     /// somewhere other than `block.timestamp`, which this library permits and
     /// the backwards clock tests exercise.
     ///
-    /// The written word carries the new level and the timestamp that level
-    /// belongs to; it is the whole of the state update.
+    /// The returned word carries the new level and the timestamp that level
+    /// belongs to; storing it is the whole of the state update.
     ///
     /// ## The stored timestamp never goes backwards
     ///
@@ -570,15 +572,15 @@ library LibLeakyBucket {
     /// the second it belongs to. When the clock is ahead, which is every case a
     /// monotonic `block.timestamp` can produce, this is `timestamp` and nothing
     /// changes.
-    /// @param bucket The bucket. Its `checkpoint` is written.
+    /// @param bucket The bucket. Not modified.
     /// @param timestamp The timestamp to fill at, in seconds.
     /// @param amount The amount to fill.
-    function fill(LeakyBucket storage bucket, uint256 timestamp, uint256 amount) internal {
-        uint256 capacity = bucket.capacity;
-        checkFillableDomain(capacity, timestamp);
+    /// @return The new packed checkpoint, to store as `bucket.checkpoint`.
+    function fill(LeakyBucket memory bucket, uint256 timestamp, uint256 amount) internal pure returns (uint256) {
+        checkFillableDomain(bucket.capacity, timestamp);
         (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
-        bucket.checkpoint = pack(
-            fillAt(level, checkpointTimestamp, timestamp, capacity, bucket.leakRate, amount),
+        return pack(
+            fillAt(level, checkpointTimestamp, timestamp, bucket.capacity, bucket.leakRate, amount),
             timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp
         );
     }

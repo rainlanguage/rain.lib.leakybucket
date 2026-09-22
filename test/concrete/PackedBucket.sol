@@ -11,8 +11,8 @@ import {LibLeakyBucket, LeakyBucket} from "../../src/lib/LibLeakyBucket.sol";
 /// concrete takes; this is the shape a stopwatch takes.
 ///
 /// The policy is written once, at construction, so a measured `fill` is the
-/// library reading the bucket's three fields and writing its checkpoint and
-/// not a policy write beside it.
+/// library reading the bucket's three fields and this contract storing the
+/// checkpoint it returns, not a policy write beside it.
 contract PackedBucket {
     /// The bucket. Its `checkpoint` is the first field of the first state
     /// variable, so it is slot 0, which the gas test reads back directly.
@@ -23,8 +23,8 @@ contract PackedBucket {
         sBucket.leakRate = leakRate;
     }
 
-    /// The library call and nothing else.
+    /// The library call and the one store, nothing else.
     function fill(uint256 amount) external {
-        LibLeakyBucket.fill(sBucket, block.timestamp, amount);
+        sBucket.checkpoint = LibLeakyBucket.fill(sBucket, block.timestamp, amount);
     }
 }

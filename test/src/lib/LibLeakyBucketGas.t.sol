@@ -22,14 +22,8 @@ import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedP
 /// a cold read for each, and constructing the subject inside a test body would
 /// leave them warm and under-report a fill by two cold `SLOAD`s.
 ///
-/// A fill reads all three fields of the bucket and writes one. The bands moved
-/// up by two cold `SLOAD`s (2,100 each under EIP-2929) when the policy moved
-/// from call arguments into the struct, which is the cost of a bucket that is
-/// one thing in one place; the steady state and rejected figures moved by
-/// exactly that, and their bands were shifted by it and not widened. The first
-/// fill moved by that plus a cold account access (2,600), because its subject
-/// used to be constructed inside the test body, which left the account warm
-/// and under-reported the regime the test is named for.
+/// A fill reads all three fields of the bucket from storage, and the caller
+/// stores the checkpoint back.
 contract LibLeakyBucketGasTest is Test {
     /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`.
     uint256 internal constant CAPACITY = WORKED_CAPACITY;

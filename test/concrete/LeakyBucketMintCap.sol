@@ -29,10 +29,6 @@ contract LeakyBucketMintCap {
     /// or wanted.
     mapping(address minter => LeakyBucket bucket) internal sBuckets;
 
-    /// A bucket to copy into for `level`, which needs a read at a capacity
-    /// other than the one in force. See there.
-    LeakyBucket internal sScratch;
-
     /// Total minted, standing in for an ERC20 balance.
     uint256 public totalMinted;
 
@@ -60,12 +56,11 @@ contract LeakyBucketMintCap {
         bucket.leakRate = leakRate;
     }
 
-    /// The whole enforcement path: hand the minter's bucket to `fill`. The
-    /// library reads the three fields and writes the checkpoint, which carries
-    /// the new level and `block.timestamp` together, so there is no second
-    /// write to forget and nothing for this contract to store.
+    /// The whole enforcement path: load the minter's bucket, hand it to `fill`,
+    /// store the checkpoint it returns. That word carries the new level and
+    /// `block.timestamp` together, so there is no second write to forget.
     function mint(uint256 amount) external {
-        LibLeakyBucket.fill(sBuckets[msg.sender], block.timestamp, amount);
+        sBuckets[msg.sender].checkpoint = LibLeakyBucket.fill(sBuckets[msg.sender], block.timestamp, amount);
         totalMinted += amount;
     }
 
@@ -85,19 +80,15 @@ contract LeakyBucketMintCap {
     /// everything needed to compute it.
     ///
     /// `headroomAt` reads the capacity from the bucket it is given, so asking
-    /// at a different capacity means asking of a different bucket: the
-    /// minter's checkpoint and rate are copied into `sScratch` with that
-    /// capacity and the read is made there. It is a write, which is why this
-    /// is not `view`; the minter's own bucket is not touched.
+    /// at a different capacity is asking of a different bucket: the minter's
+    /// checkpoint and rate, in memory, with that capacity.
     ///
     /// Note that `headroom` above is NOT this quantity subtracted from the
     /// capacity: after a capacity cut the level can stand above the capacity,
     /// where the headroom saturates at zero and the level does not.
-    function level(address minter) external returns (uint256) {
-        LeakyBucket storage bucket = sBuckets[minter];
-        sScratch = LeakyBucket({
-            checkpoint: bucket.checkpoint, capacity: LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX, leakRate: bucket.leakRate
-        });
-        return LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX - LibLeakyBucket.headroomAt(sScratch, block.timestamp);
+    function level(address minter) external view returns (uint256) {
+        LeakyBucket memory bucket = sBuckets[minter];
+        bucket.capacity = LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX;
+        return LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX - LibLeakyBucket.headroomAt(bucket, block.timestamp);
     }
 }

@@ -39,7 +39,7 @@ contract LeakyBucketEmbeddingTest is Test {
     }
 
     /// An untouched minter starts with a full allowance and no stored state.
-    function testUntouchedMinterStartsEmpty() external {
+    function testUntouchedMinterStartsEmpty() external view {
         assertEq(sCap.level(ALICE), 0);
         assertEq(sCap.headroom(ALICE), CAPACITY);
     }
