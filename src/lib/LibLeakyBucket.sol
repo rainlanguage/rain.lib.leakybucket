@@ -35,6 +35,19 @@ error LeakyBucketTimestampOverflow(uint256 timestamp);
 /// @param level The level that did not fit.
 error LeakyBucketLevelOverflow(uint256 level);
 
+/// One bucket. Put it wherever a bucket is needed — a mapping by minter, a
+/// mapping by pair, a single slot — and hand it to `fill`.
+/// @param checkpoint The packed `(level, timestamp)` word. Zero is an empty
+/// bucket checkpointed at the epoch, so an untouched slot needs no initialiser.
+/// `fill` writes it; nothing else should.
+/// @param capacity The burst. Must be at or below `LEAKY_BUCKET_LEVEL_MAX`.
+/// @param leakRate The sustained rate, in units per second.
+struct LeakyBucket {
+    uint256 checkpoint;
+    uint256 capacity;
+    uint256 leakRate;
+}
+
 /// @title LibLeakyBucket
 /// @notice A leaky bucket meter over one 256 bit word of caller-held state.
 ///
@@ -53,10 +66,10 @@ error LeakyBucketLevelOverflow(uint256 level);
 ///
 /// ## The surface is one function
 ///
-/// `fill` is the product. It takes the packed checkpoint a caller has stored,
-/// a clock, the policy pair and an amount, and it either reverts or returns the
-/// word to store back. `headroomAt` is the only other entry point and it exists
-/// for one reason, written into its own NatSpec.
+/// `fill` is the product. It takes a `LeakyBucket` in the caller's storage, a
+/// clock and an amount, and either reverts or writes the bucket's new
+/// checkpoint. `headroomAt` is the only other entry point and it exists for one
+/// reason, written into its own NatSpec.
 ///
 /// Everything else here is `private`, because everything else here is a step of
 /// `fill` rather than a thing to call. Every exported symbol is one a caller can
@@ -508,27 +521,22 @@ library LibLeakyBucket {
     /// reads zero, every non zero fill is rejected, and the bucket leaks down
     /// under the new policy until it fits. No fill is needed to make the new
     /// capacity bind, and nothing has to be migrated.
-    /// @param checkpoint The packed checkpoint.
+    /// @param bucket The bucket.
     /// @param timestamp The timestamp to evaluate the bucket at, in seconds.
-    /// @param capacity The bucket capacity.
-    /// @param leakRate The leak in units per second.
     /// @return The amount that would fit at `timestamp`.
-    function headroomAt(uint256 checkpoint, uint256 timestamp, uint256 capacity, uint256 leakRate)
-        internal
-        pure
-        returns (uint256)
-    {
+    function headroomAt(LeakyBucket storage bucket, uint256 timestamp) internal view returns (uint256) {
+        uint256 capacity = bucket.capacity;
         checkFillableDomain(capacity, timestamp);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));
+        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
+        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));
     }
 
-    /// Fill a bucket with `amount` at `timestamp`, returning the new packed
-    /// checkpoint to store. Reverts with `LeakyBucketCapacityExceeded` if the
+    /// Fill a bucket with `amount` at `timestamp`, writing its new checkpoint
+    /// back. Reverts with `LeakyBucketCapacityExceeded` if the
     /// amount does not fit, `LeakyBucketCapacityOverflow` if `capacity` is one
     /// this library cannot enforce, or `LeakyBucketTimestampOverflow` if
     /// `timestamp` is past the width of the packed field and so cannot be
-    /// recorded. The caller stores nothing in any of the three cases, and that
+    /// recorded. Nothing is written in any of the three cases, and that
     /// list is exhaustive: a `try`/`catch`, or a frontend decoding a failed
     /// simulation, is written from it.
     ///
@@ -536,8 +544,8 @@ library LibLeakyBucket {
     /// somewhere other than `block.timestamp`, which this library permits and
     /// the backwards clock tests exercise.
     ///
-    /// The returned word carries the new level and the timestamp that level
-    /// belongs to, so writing it back is the whole of the state update.
+    /// The written word carries the new level and the timestamp that level
+    /// belongs to; it is the whole of the state update.
     ///
     /// ## The stored timestamp never goes backwards
     ///
@@ -564,21 +572,15 @@ library LibLeakyBucket {
     /// the second it belongs to. When the clock is ahead, which is every case a
     /// monotonic `block.timestamp` can produce, this is `timestamp` and nothing
     /// changes.
-    /// @param checkpoint The packed checkpoint.
+    /// @param bucket The bucket. Its `checkpoint` is written.
     /// @param timestamp The timestamp to fill at, in seconds.
-    /// @param capacity The bucket capacity.
-    /// @param leakRate The leak in units per second.
     /// @param amount The amount to fill.
-    /// @return The new packed checkpoint.
-    function fill(uint256 checkpoint, uint256 timestamp, uint256 capacity, uint256 leakRate, uint256 amount)
-        internal
-        pure
-        returns (uint256)
-    {
+    function fill(LeakyBucket storage bucket, uint256 timestamp, uint256 amount) internal {
+        uint256 capacity = bucket.capacity;
         checkFillableDomain(capacity, timestamp);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return pack(
-            fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),
+        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
+        bucket.checkpoint = pack(
+            fillAt(level, checkpointTimestamp, timestamp, capacity, bucket.leakRate, amount),
             timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp
         );
     }

@@ -82,15 +82,19 @@ starting state and no initializer is needed.
 ```solidity
 import {LibLeakyBucket} from "rain-lib-leakybucket-x.y.z/src/lib/LibLeakyBucket.sol";
 
+struct MinterBucket {
+    uint256 checkpoint;
+    uint256 capacity;
+    uint256 leakRate;
+}
+
 contract Token {
-    mapping(address minter => uint256 checkpoint) internal sBuckets;
-    mapping(address minter => uint256 capacity) internal sCapacity;
-    mapping(address minter => uint256 leakRate) internal sLeakRate;
+    mapping(address minter => MinterBucket) internal sBuckets;
 
     function mint(address to, uint256 amount) external {
-        sBuckets[msg.sender] = LibLeakyBucket.fill(
-            sBuckets[msg.sender], block.timestamp, sCapacity[msg.sender], sLeakRate[msg.sender], amount
-        );
+        MinterBucket storage bucket = sBuckets[msg.sender];
+        bucket.checkpoint =
+            LibLeakyBucket.fill(bucket.checkpoint, block.timestamp, bucket.capacity, bucket.leakRate, amount);
         _mint(to, amount);
     }
 }
@@ -140,7 +144,7 @@ function setCapacity(address minter, uint256 capacity) external onlyGovernance {
     if (capacity > LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX) {
         revert LeakyBucketCapacityOverflow(capacity);
     }
-    sCapacity[minter] = capacity;
+    sBuckets[minter].capacity = capacity;
 }
 ```
 
