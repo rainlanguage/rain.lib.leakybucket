@@ -11,25 +11,14 @@ import {
     LEAKY_BUCKET_SECONDS_PER_WEEK
 } from "../../../src/lib/LibLeakyBucket.sol";
 import {LibLeakyBucketSlow} from "../../lib/LibLeakyBucketSlow.sol";
+import {LeakyBucketExternal} from "../../abstract/LeakyBucketExternal.sol";
 
 /// Properties of the bucket itself, stated as invariants over the whole input
 /// space rather than as a table of worked examples. The cap is only as good as
 /// the arithmetic under it, so the bounds that make it a cap at all, that the
 /// level never rises on its own, never underflows, and never grants headroom
 /// that time did not earn, are asserted directly.
-contract LibLeakyBucketTest is Test {
-    /// `expectRevert` needs an external call boundary.
-    function externalFillAt(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        uint256 capacity,
-        uint256 leakRate,
-        uint256 amount
-    ) external pure returns (uint256) {
-        return LibLeakyBucket.fillAt(level, checkpoint, timestamp, capacity, leakRate, amount);
-    }
-
+contract LibLeakyBucketTest is Test, LeakyBucketExternal {
     /// `expectRevert` needs an external call boundary.
     function externalLeakRatePer(uint256 amountPerPeriod, uint256 period) external pure returns (uint256) {
         return LibLeakyBucket.leakRatePer(amountPerPeriod, period);
