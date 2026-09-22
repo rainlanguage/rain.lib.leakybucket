@@ -189,5 +189,28 @@
       "filed": [],
       "notes": "Survivors M55, M56, M57 are pack's own guards, which fill bounds out of reach before pack is called; unchanged from the previous three records. No tests added. Isolated clone, green 56 test baseline, 0 harness errors."
     }
+  },
+  {
+    "timestamp": "2026-09-22T16:51:53Z",
+    "commit": "1463c2528a8bf315a60cf09bc5739afaae3924bf",
+    "testsAfterCommit": "1463c2528a8bf315a60cf09bc5739afaae3924bf",
+    "publishedTag": "sol-v0.2.0",
+    "commitsAheadOfTag": 3,
+    "scope": "re-probe after the private max (b81c9d3) and the zero fill rejection (3d52080). 60 mutants against src/lib/LibLeakyBucket.sol: M46-M48 retargeted to max, M60 added (zero amount guard removed). Probe ran on 3d52080; this commit differs from it by one comment line in test/, no bytecode change.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 60,
+      "mutantsKilledByPreExistingSuite": 57,
+      "mutantsSurvivedPreExistingSuite": 3,
+      "mutantsKilledAfter": 57,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 56,
+      "testsAfter": 56,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Survivors M55, M56, M57 are pack's own guards, which fill bounds out of reach before pack is called; unchanged from the previous four records. M60 killed by testFillRejectsZeroAmount and testHeadroomIsAlwaysFillable. Isolated clone, green 56 test baseline, 0 harness errors."
+    }
   }
 ]
