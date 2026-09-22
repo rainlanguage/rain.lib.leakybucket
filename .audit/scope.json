@@ -1,0 +1,37 @@
+{
+  "auditedAt": "2026-09-22T05:00:00Z",
+  "auditedCommit": "e7b499a8b2d757f2375154902a8e46e57423049e",
+  "files": [
+    ".github/workflows/package-release.yaml",
+    ".github/workflows/pr-assessment.yaml",
+    ".github/workflows/rainix-sol.yaml",
+    ".gitignore",
+    ".soldeerignore",
+    "LICENSE",
+    "README.md",
+    "REUSE.toml",
+    "audit/mutation-test-scans.json",
+    "flake.lock",
+    "flake.nix",
+    "foundry.toml",
+    "slither.config.json",
+    "soldeer.lock",
+    "src/lib/LibLeakyBucket.sol",
+    "src/lib/LibLeakyBucketCheckpoint.sol",
+    "test/lib/LeakyBucketMintCap.sol",
+    "test/lib/LibLeakyBucketSlow.sol",
+    "test/lib/PackedBucket.sol",
+    "test/lib/UnpackedBucket.sol",
+    "test/src/lib/CapacityBound.t.sol",
+    "test/src/lib/LeakyBucketEmbedding.t.sol",
+    "test/src/lib/LibLeakyBucket.t.sol",
+    "test/src/lib/LibLeakyBucketCheckpoint.t.sol",
+    "test/src/lib/LibLeakyBucketGas.t.sol"
+  ],
+  "countsByLanguage": {
+    "solidity": 11,
+    "rust": 0,
+    "typescript": 0,
+    "svelte": 0
+  }
+}

@@ -4,6 +4,7 @@ version = 1
 path = [
   ".github/workflows/**/",
   "audit/**",
+  ".audit/**",
   ".gitignore",
   "README.md",
   "flake.lock",

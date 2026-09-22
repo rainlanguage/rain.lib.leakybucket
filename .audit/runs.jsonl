@@ -1,0 +1,1 @@
+{"scope":"whole-repo","auditedAt":"2026-09-22T05:00:00Z","auditedCommit":"e7b499a8b2d757f2375154902a8e46e57423049e","skillVersion":"0.35.0","skillCommit":"558c2d2ca7793ac54e83ff5d71b48c4c692b7c35","dimensions":["process","security","test-coverage","documentation","code-quality","correctness","hazard-surface"],"fileCount":25,"pass2":"ledgered"}
