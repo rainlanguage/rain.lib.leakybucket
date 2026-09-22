@@ -81,11 +81,13 @@ error LeakyBucketTimestampOverflow(uint256 timestamp);
 /// ```solidity
 /// // One bucket per minter, each with its own policy, governed however the
 /// // concrete likes.
-/// mapping(address minter => uint256 checkpoint) internal _buckets;
+/// mapping(address minter => uint256 checkpoint) internal sBuckets;
+/// mapping(address minter => uint256 capacity) internal sCapacity;
+/// mapping(address minter => uint256 leakRate) internal sLeakRate;
 ///
 /// function mint(address to, uint256 amount) external {
-///     _buckets[msg.sender] = LibLeakyBucketCheckpoint.fill(
-///         _buckets[msg.sender], block.timestamp, capacity[msg.sender], leakRate[msg.sender], amount
+///     sBuckets[msg.sender] = LibLeakyBucketCheckpoint.fill(
+///         sBuckets[msg.sender], block.timestamp, sCapacity[msg.sender], sLeakRate[msg.sender], amount
 ///     );
 ///     _mint(to, amount);
 /// }
