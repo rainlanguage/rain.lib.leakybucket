@@ -38,22 +38,13 @@ contract CapacityBoundTest is Test {
         return LibLeakyBucket.fillAt(level, checkpoint, timestamp, capacity, leakRate, amount);
     }
 
-    /// Idling accrues NO credit beyond the capacity. However long a bucket sits
-    /// untouched, the most it can ever offer is one full capacity. There is no
-    /// input that lets waiting bank more than that.
-    function testIdlingAccruesNoCreditBeyondCapacity(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        uint256 capacity,
-        uint256 leakRate
-    ) external pure {
-        assertLe(LibLeakyBucket.headroomAt(level, checkpoint, timestamp, capacity, leakRate), capacity);
-    }
-
-    /// The same thing on the worked policy, at a wait long enough that a
-    /// design which banked credit would be obvious: a thousand drain times of
-    /// idling still offers exactly one capacity, not a thousand.
+    /// Idling accrues NO credit beyond the capacity: however long a bucket sits
+    /// untouched, the most it can ever offer is one full capacity, and there is
+    /// no input that lets waiting bank more than that. This is the worked-policy
+    /// form of it, at a wait long enough that a design which banked credit would
+    /// be obvious — a thousand drain times of idling still offers exactly one
+    /// capacity, not a thousand. The general form, over arbitrary inputs, is
+    /// `testHeadroomAtNeverExceedsCapacity` in `LibLeakyBucket.t.sol`.
     function testIdleForAThousandDrainTimesStillOffersOneCapacity() external pure {
         assertEq(LibLeakyBucket.headroomAt(0, 0, DRAIN * 1000, CAPACITY, LEAK_RATE), CAPACITY);
     }
