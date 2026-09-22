@@ -37,15 +37,15 @@ the capacity, otherwise record it.
   puts a `LeakyBucket` wherever a bucket is needed and hands it over; there is
   no returned word to store and no way to store it against the wrong key. The
   packed word's layout, `LEAKY_BUCKET_LEVEL_MAX` and the errors are unchanged,
-  so a stored checkpoint carries across as the struct's first field. A fill
-  now reads the policy pair from storage, which is two cold `SLOAD`s a policy
-  passed as arguments did not pay.
+  so a stored checkpoint carries across as the struct's first field. A fill now
+  reads the policy pair from storage, which is two cold `SLOAD`s a policy passed
+  as arguments did not pay.
 - The exported surface is `LeakyBucket`, `fill`, `headroomAt`,
   `LEAKY_BUCKET_LEVEL_MAX`, and the three errors `fill` can raise. Everything
-  else is `private`: `leak`,
-  `levelAt`, `headroomFrom`, `fillAt`, `pack`, `unpack`, `checkCapacity`,
-  `checkTimestamp`, `checkFillableDomain`, and the two width constants
-  `LEAKY_BUCKET_TIMESTAMP_BITS` and `LEAKY_BUCKET_TIMESTAMP_MAX`.
+  else is `private`: `leak`, `levelAt`, `headroomFrom`, `fillAt`, `pack`,
+  `unpack`, `checkCapacity`, `checkTimestamp`, `checkFillableDomain`, and the
+  two width constants `LEAKY_BUCKET_TIMESTAMP_BITS` and
+  `LEAKY_BUCKET_TIMESTAMP_MAX`.
 - **Removed:** `leakRatePer` and `LEAKY_BUCKET_SECONDS_PER_HOUR` / `_DAY` /
   `_WEEK`. Per second rates are a stated requirement, so a helper that accepts a
   rate expressed per something else re-opens a decided question, and it does it

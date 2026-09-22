@@ -96,8 +96,8 @@ contract Token {
 
 Three `SLOAD`s, one library call, one `SSTORE`. The call reverts with
 `LeakyBucketCapacityExceeded(capacity, level, amount)` if the amount does not
-fit, and nothing is written. There is no returned word to store and so no way
-to store it against the wrong key.
+fit, and nothing is written. There is no returned word to store and so no way to
+store it against the wrong key.
 
 ### Governance is yours
 
@@ -171,12 +171,13 @@ because any answer there would be a promise `fill` breaks.
 
 The level a bucket is carrying is not a second read, because it does not need to
 be: `headroomAt` against a `capacity` of `LEAKY_BUCKET_LEVEL_MAX` is
-`LEAKY_BUCKET_LEVEL_MAX - level` exactly — a level out of a stored word can never
-exceed that bound, so the saturation never bites and the subtraction inverts it.
-`headroomAt` reads the capacity from the bucket it is given, so asking at that
-capacity means asking of a bucket that has it: copy the checkpoint and the rate
-into a scratch `LeakyBucket` with that capacity and read there. The test harness
-does exactly this, and it is a write, so it is not a `view`.
+`LEAKY_BUCKET_LEVEL_MAX - level` exactly — a level out of a stored word can
+never exceed that bound, so the saturation never bites and the subtraction
+inverts it. `headroomAt` reads the capacity from the bucket it is given, so
+asking at that capacity means asking of a bucket that has it: copy the
+checkpoint and the rate into a scratch `LeakyBucket` with that capacity and read
+there. The test harness does exactly this, and it is a write, so it is not a
+`view`.
 
 ## Design notes
 
