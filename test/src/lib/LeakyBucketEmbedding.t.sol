@@ -219,8 +219,16 @@ contract LeakyBucketEmbeddingTest is Test {
 
     /// However a minter splits its calls, and however long it waits between
     /// them, the burst available to it is never more than one capacity. The
-    /// fuzzer picks the split and the gaps; the assertion inside the loop is
+    /// fuzzer picks the split and the gaps; the assertions inside the loop are
     /// the security property, checked at every point of an arbitrary history.
+    ///
+    /// Every call's outcome is PREDICTED from the headroom before it, rather
+    /// than swallowed. Multi-call state sequences are the one region a mutation
+    /// ledger over pure functions structurally cannot reach — a mutant is
+    /// killed or not by a single call's result — so this is where a spurious
+    /// rejection in the middle of a long history has to be caught. A loop that
+    /// caught every revert could not: a cap that refused everything leaves
+    /// `minted` at zero, and zero satisfies every assertion after the loop.
     function testNoMintExceedsCapacityUnderArbitrarySplits(uint8 mints, uint16[16] memory gaps, uint256 amount)
         external
     {
@@ -233,11 +241,29 @@ contract LeakyBucketEmbeddingTest is Test {
             vm.warp(block.timestamp + gaps[i]);
             // The burst on offer is never larger than one capacity, no matter
             // what has happened up to here or how long the wait was.
-            assertLe(cap.headroom(ALICE), CAPACITY);
-            vm.prank(ALICE);
-            try cap.mint(amount) {
+            uint256 headroomBefore = cap.headroom(ALICE);
+            uint256 levelBefore = cap.level(ALICE);
+            assertLe(headroomBefore, CAPACITY);
+            assertEq(headroomBefore, CAPACITY - levelBefore);
+
+            if (amount <= headroomBefore) {
+                // It fits, so it must land, and land exactly.
+                vm.prank(ALICE);
+                cap.mint(amount);
                 minted += amount;
-            } catch {}
+                assertEq(cap.level(ALICE), levelBefore + amount);
+                assertEq(cap.headroom(ALICE), headroomBefore - amount);
+            } else {
+                // It does not fit, so it must be refused, for this reason, and
+                // leave the bucket exactly as it was.
+                vm.prank(ALICE);
+                vm.expectRevert(
+                    abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, levelBefore, amount)
+                );
+                cap.mint(amount);
+                assertEq(cap.level(ALICE), levelBefore);
+                assertEq(cap.headroom(ALICE), headroomBefore);
+            }
         }
 
         assertEq(minted, cap.totalMinted());
