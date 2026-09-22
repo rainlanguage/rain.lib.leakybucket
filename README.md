@@ -243,8 +243,12 @@ policy change rather than a refused mint.
 
 ## Gas
 
-Measured by `test/src/lib/LibLeakyBucketGas.t.sol`, which asserts a band around
-each figure so a compiler or EVM change that moves one fails the suite.
+Measured by `test/src/lib/LibLeakyBucketGas.t.sol`, which logs each figure and
+asserts a band around it. The bands are coarse: the widest admits a value a
+third above the figure it brackets, and the saving on the extra `SSTORE` is
+bounded from below only. They catch a large compiler or EVM change; they do not
+pin the numbers below, which are read off that test's output and updated by
+hand.
 
 | Path                              | Gas    |
 | --------------------------------- | ------ |
@@ -258,10 +262,13 @@ a first fill. The two are measured separately because `forge` carries its dirty
 slot journal across from `setUp`, so a single steady state measurement cannot
 price the second `SSTORE`.
 
-The saving is the 2,100 of a cold `SLOAD` less the ~78 gas of the two guards the
-codec runs and a two slot layout has no reason to: the bound on a `capacity` the
-packed level field cannot hold, and the comparison that keeps the stored
-checkpoint from moving backwards.
+That 1,947 is a net figure, not the price of one opcode. The two slot layout
+pays one extra cold `SLOAD`, 2,100 gas, and one extra `SSTORE`; against that the
+codec pays for its own packing and for four comparisons a two slot layout has no
+reason to run — the bound on a `capacity` the packed level field cannot hold,
+the level and the timestamp `pack` refuses to truncate, and the check that keeps
+the stored checkpoint from moving backwards. 1,947 is what is left of the one
+after the other.
 
 ## Why this exists
 
