@@ -166,5 +166,28 @@
       "filed": [],
       "notes": "Survivors unchanged from the previous two records and unchanged in reason: M55, M56, M57 are pack's rejection paths, which fill bounds out of reach before pack is called. Both new mutants are killed: M58 (the checkpoint write dropped) by testFillWritesOnlyTheCheckpoint and the suite's every read-after-fill; M59 (leak rate read from the capacity field) by the drain-rate tests. One test added, testFillWritesOnlyTheCheckpoint, pinning that fill writes the checkpoint and leaves capacity and leakRate untouched, which is a property the struct API newly makes expressible. A first probe of this tree was run concurrently with forge test in the same clone and was discarded; when it was killed it left one mutant applied (checkFillableDomain's two checks swapped), which was found by the suite before this record's probe and restored. This entry is from a second, isolated probe against the committed tree."
     }
+  },
+  {
+    "timestamp": "2026-09-22T16:33:46Z",
+    "commit": "c55628d941e24c038c71b8fa2d103d8952481d05",
+    "testsAfterCommit": "c55628d941e24c038c71b8fa2d103d8952481d05",
+    "publishedTag": "sol-v0.1.6",
+    "commitsAheadOfTag": 8,
+    "scope": "re-probe after #111 (entry points take LeakyBucket in memory and fill returns the checkpoint), #113 and the comment trim. Same 59 mutants against src/lib/LibLeakyBucket.sol; M58 now returns the old checkpoint instead of the new one.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 59,
+      "mutantsKilledByPreExistingSuite": 56,
+      "mutantsSurvivedPreExistingSuite": 3,
+      "mutantsKilledAfter": 56,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 56,
+      "testsAfter": 56,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Survivors M55, M56, M57 are pack's own guards, which fill bounds out of reach before pack is called; unchanged from the previous three records. No tests added. Isolated clone, green 56 test baseline, 0 harness errors."
+    }
   }
 ]
