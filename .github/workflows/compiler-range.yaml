@@ -1,0 +1,20 @@
+# `src/` floats `^0.8.25`, which tells every consumer it compiles on any 0.8.x
+# at or above that. `rainix-sol` only ever builds it at 0.8.25, the bottom of
+# that range, so the promise is untested at the top. This builds it there.
+name: compiler-range
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  top-of-range:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: rainlanguage/rainix/.github/actions/checkout@main
+      - name: Install soldeer dependencies
+        run: nix develop github:rainlanguage/rainix/8657b83b68f41957ab85da91132c3f652c1f32c0#sol-shell -c forge soldeer install
+      # Build only, and only `src/`. The suite cannot run here: every test and
+      # harness pins `=0.8.25`, as a concrete contract should, so `forge test`
+      # at another version fails before it starts. This proves the caret's
+      # claim that the library compiles, not that it behaves identically.
+      - run: nix develop github:rainlanguage/rainix/8657b83b68f41957ab85da91132c3f652c1f32c0#sol-shell -c env FOUNDRY_PROFILE=solc-range forge build --force

@@ -24,3 +24,19 @@ forge-std = "1.16.2"
 
 [soldeer]
 recursive_deps = false
+
+# The shipped library floats `^0.8.25`, which promises every consumer that it
+# compiles on any 0.8.x at or above that. The default profile only ever proves
+# the bottom of that range: `solc = "0.8.25"`. This profile proves the top.
+#
+# It builds `src/` alone, because it has to. Ten of the repo's fifteen Solidity
+# files pin `=0.8.25` — every test and harness, correctly, since a concrete
+# contract pins — so a suite run at any other version fails before it starts on
+# "No solc version exists that matches the version requirement". Only the five
+# floating files can be asked this question at all, and `skip` is what asks it.
+#
+# This is a compile check, not a behaviour check: it proves the promise the
+# caret makes (that it builds), not that it behaves identically on 0.8.26+.
+[profile.solc-range]
+skip = ["test/**"]
+solc = "0.8.30"
