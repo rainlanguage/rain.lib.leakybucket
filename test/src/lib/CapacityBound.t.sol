@@ -4,6 +4,7 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {LibLeakyBucket, LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
+import {LibSaturatingMath} from "rain-math-saturating-0.1.10/src/lib/LibSaturatingMath.sol";
 import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
 import {LeakyBucketExternal} from "../../abstract/LeakyBucketExternal.sol";
 
@@ -137,6 +138,23 @@ contract CapacityBoundTest is Test, LeakyBucketExternal {
         uint256 levelLater = LibLeakyBucket.levelAt(level, checkpoint, later, leakRate);
         // Monotonic in time, so this cannot underflow.
         assertLe(levelEarlier - levelLater, capacity);
+
+        // The identity the docstring names, asserted rather than implied. The
+        // bound above cannot fail on its own: `bound(level, 0, capacity)` makes
+        // `<= capacity` true for any leak that does not RAISE the level, which
+        // `testLeakNeverRaisesLevel` pins, so the only thing left for it to
+        // catch is a non-monotonic leak underflowing the subtraction, which
+        // `testLevelAtMonotonicInTime` catches already. What neither pins is
+        // the SIZE of the leak, and the size is what decides whether the cap
+        // converges to the rate the policy names or to something slacker.
+        //
+        // Credited leak is exactly `min(level, elapsed * leakRate)`, with
+        // `elapsed` taken from the checkpoint and saturating at zero behind it.
+        // `testLeakIsExactWhereItCannotOverflow` states this for levels up to
+        // `uint128` and products that cannot overflow; here it is stated over
+        // the whole word, where both saturations bite.
+        uint256 product = LibSaturatingMath.saturatingMul(LibSaturatingMath.saturatingSub(later, checkpoint), leakRate);
+        assertEq(level - levelLater, product < level ? product : level);
     }
 
     /// Consuming the bucket zeroes it immediately, in the same second, not
