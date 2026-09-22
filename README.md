@@ -305,7 +305,19 @@ against.
 
 ## Development
 
+`dependencies/` and `remappings.txt` are gitignored, so a fresh clone has
+neither and `forge test` fails on unresolved imports before it reaches anything
+about this library. Install them first:
+
 ```
 nix develop
+forge soldeer install
 forge test
 ```
+
+`forge soldeer install` reads the `[dependencies]` table in `foundry.toml`,
+populates `dependencies/`, and writes `remappings.txt`. Nothing else regenerates
+the remappings, so re-run it after any edit to that table.
+
+That is the order CI runs in: the shared `rainix-sol` workflow installs soldeer
+dependencies before `slither`, `forge fmt`, `forge lint` and `forge test`.
