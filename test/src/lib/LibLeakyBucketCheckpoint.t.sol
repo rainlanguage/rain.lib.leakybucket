@@ -404,4 +404,38 @@ contract LibLeakyBucketCheckpointTest is Test {
         );
         assertLe(newLevel, LEAKY_BUCKET_LEVEL_MAX);
     }
+
+    /// The error identities are a published surface: a consumer that catches a
+    /// rejection, an indexer, or a frontend decoding a failed simulation all
+    /// match on the four byte selector, which is the hash of the signature.
+    /// Every other test here names the errors symbolically, so the selector the
+    /// suite expects is recomputed from whatever the signature currently is —
+    /// a parameter added, removed, reordered or retyped keeps the suite green
+    /// while silently changing what consumers decode.
+    ///
+    /// The packed layout is already pinned this way, as literals, by
+    /// `testLayoutIsLevelHighTimestampLow`. This is the same pin on the other
+    /// half of the published surface, so a change to an error's identity has to
+    /// be made here, deliberately, where it can be recognised as the breaking
+    /// change it is and released as one.
+    ///
+    /// The `bytes32` casts are because forge-std has no `bytes4` overload of
+    /// `assertEq`.
+    function testErrorSelectorsArePinnedToTheirSignatures() external pure {
+        assertEq(
+            bytes32(LeakyBucketCapacityExceeded.selector),
+            bytes32(bytes4(keccak256("LeakyBucketCapacityExceeded(uint256,uint256,uint256)")))
+        );
+        assertEq(
+            bytes32(LeakyBucketCapacityOverflow.selector),
+            bytes32(bytes4(keccak256("LeakyBucketCapacityOverflow(uint256)")))
+        );
+        assertEq(
+            bytes32(LeakyBucketLevelOverflow.selector), bytes32(bytes4(keccak256("LeakyBucketLevelOverflow(uint256)")))
+        );
+        assertEq(
+            bytes32(LeakyBucketTimestampOverflow.selector),
+            bytes32(bytes4(keccak256("LeakyBucketTimestampOverflow(uint256)")))
+        );
+    }
 }
