@@ -53,6 +53,10 @@ contract LibLeakyBucketCheckpointTest is Test {
         LibLeakyBucketCheckpoint.checkCapacity(capacity);
     }
 
+    function externalCheckTimestamp(uint256 timestamp) external pure {
+        LibLeakyBucketCheckpoint.checkTimestamp(timestamp);
+    }
+
     /// Every packable pair survives the round trip.
     function testPackUnpackRoundTrip(uint192 level, uint64 timestamp) external pure {
         (uint256 unpackedLevel, uint256 unpackedTimestamp) =
@@ -69,12 +73,26 @@ contract LibLeakyBucketCheckpointTest is Test {
     }
 
     /// The fields do not bleed into each other. Changing one across its whole
-    /// range never moves the other.
-    function testFieldsDoNotAlias(uint192 level, uint64 timestamp, uint192 otherLevel) external pure {
+    /// range never moves the other — both directions, which is what the claim
+    /// says and what a packing bug needs.
+    function testFieldsDoNotAlias(uint192 level, uint64 timestamp, uint192 otherLevel, uint64 otherTimestamp)
+        external
+        pure
+    {
+        // Moving the level across its whole range never moves the timestamp.
         (, uint256 timestampA) = LibLeakyBucketCheckpoint.unpack(LibLeakyBucketCheckpoint.pack(level, timestamp));
         (, uint256 timestampB) = LibLeakyBucketCheckpoint.unpack(LibLeakyBucketCheckpoint.pack(otherLevel, timestamp));
         assertEq(timestampA, timestampB);
         assertEq(timestampA, timestamp);
+
+        // And moving the timestamp across its whole range never moves the
+        // level. This is the direction a wrong unpack mask breaks: the
+        // timestamp is in the low bits, so its overspill lands in the level,
+        // which is a bucket reading fuller or emptier than it is.
+        (uint256 levelA,) = LibLeakyBucketCheckpoint.unpack(LibLeakyBucketCheckpoint.pack(level, timestamp));
+        (uint256 levelB,) = LibLeakyBucketCheckpoint.unpack(LibLeakyBucketCheckpoint.pack(level, otherTimestamp));
+        assertEq(levelA, levelB);
+        assertEq(levelA, level);
     }
 
     /// A zero word is an empty bucket checkpointed at the epoch, so an
@@ -130,9 +148,15 @@ contract LibLeakyBucketCheckpointTest is Test {
             LibLeakyBucketCheckpoint.headroomAt(packed, timestamp, capacity, leakRate),
             LibLeakyBucket.headroomAt(level, checkpoint, timestamp, capacity, leakRate)
         );
+        // `fillableAt` is the core's answer narrowed to this codec's horizon:
+        // the core has the whole word to name a second in, the packed field has
+        // sixty four bits, and a second the field cannot hold is one `fill` can
+        // never be called at — never rather than a date. Everything inside the
+        // horizon is the core's answer unchanged.
+        uint256 coreFillableAt = LibLeakyBucket.fillableAt(level, checkpoint, timestamp, capacity, leakRate, amount);
         assertEq(
             LibLeakyBucketCheckpoint.fillableAt(packed, timestamp, capacity, leakRate, amount),
-            LibLeakyBucket.fillableAt(level, checkpoint, timestamp, capacity, leakRate, amount)
+            coreFillableAt > LEAKY_BUCKET_TIMESTAMP_MAX ? type(uint256).max : coreFillableAt
         );
     }
 
@@ -228,10 +252,29 @@ contract LibLeakyBucketCheckpointTest is Test {
 
     /// The layout is the level in the high bits and the timestamp in the low
     /// ones, stated as a value rather than left to the constants.
+    ///
+    /// Two things are pinned here and they are not the same thing. The three
+    /// literals are the layout this version of the codec ships: change the width
+    /// and they fail, by design, so the change is deliberate rather than
+    /// incidental. The four assertions after them are what the constants owe
+    /// each other at *any* width, and they are what makes the two maxima
+    /// derived quantities rather than two more numbers to keep in step by hand.
     function testLayoutIsLevelHighTimestampLow() external pure {
         assertEq(LEAKY_BUCKET_TIMESTAMP_BITS, 64);
         assertEq(LEAKY_BUCKET_TIMESTAMP_MAX, type(uint64).max);
         assertEq(LEAKY_BUCKET_LEVEL_MAX, type(uint192).max);
+        // The invariant the codec rests on, stated rather than implied. The
+        // three literals above are what this test pins; these four are what
+        // they owe each other, and they hold at any width rather than only at
+        // this one. The timestamp max IS the mask `unpack` applies, the level
+        // max IS the word less the timestamp field, and together the two fields
+        // tile the word exactly: no gap, no overlap.
+        assertEq(LEAKY_BUCKET_TIMESTAMP_MAX, (uint256(1) << LEAKY_BUCKET_TIMESTAMP_BITS) - 1);
+        assertEq(LEAKY_BUCKET_LEVEL_MAX, type(uint256).max >> LEAKY_BUCKET_TIMESTAMP_BITS);
+        assertEq(
+            (LEAKY_BUCKET_LEVEL_MAX << LEAKY_BUCKET_TIMESTAMP_BITS) | LEAKY_BUCKET_TIMESTAMP_MAX, type(uint256).max
+        );
+        assertEq((LEAKY_BUCKET_LEVEL_MAX << LEAKY_BUCKET_TIMESTAMP_BITS) & LEAKY_BUCKET_TIMESTAMP_MAX, 0);
         assertEq(LibLeakyBucketCheckpoint.pack(1, 0), 1 << 64);
         assertEq(LibLeakyBucketCheckpoint.pack(0, 1), 1);
         assertEq(LibLeakyBucketCheckpoint.pack(LEAKY_BUCKET_LEVEL_MAX, LEAKY_BUCKET_TIMESTAMP_MAX), type(uint256).max);
@@ -385,10 +428,17 @@ contract LibLeakyBucketCheckpointTest is Test {
         this.externalFill(0, 0, capacity, 0, headroom + 1);
     }
 
-    /// Whatever `headroomAt` reports is a fill the codec takes, at every input
-    /// it will answer at all. The claim is the NatSpec's own words — "the
-    /// largest amount `fill` would accept" — and the half that failed was
-    /// acceptance, not rejection, so acceptance is what is fuzzed here.
+    /// Whatever `headroomAt` reports is a fill the codec takes IN FULL, at
+    /// every input it will answer at all. The claim is the NatSpec's own words
+    /// — "the largest amount `fill` would accept" — and the half that failed
+    /// was acceptance, not rejection, so acceptance is what is fuzzed here.
+    ///
+    /// Acceptance means the level moved by exactly the amount reported. Only
+    /// checking that `fill` did not revert leaves a `fill` that took the
+    /// amount and then stored the old level passing unchanged: the unpacked
+    /// level is `checkpoint >> 64` for every word in existence, so bounding it
+    /// by `LEAKY_BUCKET_LEVEL_MAX` is a tautology and asserts nothing about
+    /// what the codec did.
     function testHeadroomAtIsAlwaysFillable(
         uint192 level,
         uint64 checkpoint,
@@ -397,11 +447,344 @@ contract LibLeakyBucketCheckpointTest is Test {
         uint256 leakRate
     ) external pure {
         uint256 packed = LibLeakyBucketCheckpoint.pack(level, checkpoint);
+        uint256 levelNow = LibLeakyBucketCheckpoint.levelAt(packed, timestamp, leakRate);
         uint256 headroom = LibLeakyBucketCheckpoint.headroomAt(packed, timestamp, capacity, leakRate);
 
         (uint256 newLevel,) = LibLeakyBucketCheckpoint.unpack(
             LibLeakyBucketCheckpoint.fill(packed, timestamp, capacity, leakRate, headroom)
         );
-        assertLe(newLevel, LEAKY_BUCKET_LEVEL_MAX);
+
+        // The fill was taken in full, not silently dropped or clamped.
+        assertEq(newLevel, levelNow + headroom);
+        // And it lands exactly at the capacity, unless the bucket was already
+        // above it, in which case the only headroom on offer was zero.
+        assertEq(newLevel, levelNow > capacity ? levelNow : capacity);
+    }
+
+    /// The rule every packed entry point that makes a claim about `fill` obeys,
+    /// stated once and fuzzed over the UNBOUNDED input space rather than over
+    /// `uint64`/`uint192` parameters that assume the bounds instead of checking
+    /// them: a read answers exactly where `fill` acts, and refuses exactly what
+    /// `fill` refuses, with the same error carrying the same argument.
+    ///
+    /// The `capacity` half of this was already true and is re-derived here. The
+    /// `timestamp` half was not: every other fuzz test in this file declares
+    /// `uint64 timestamp`, so the entire region where the reads used to answer
+    /// and `fill` used to revert was excluded from the suite by the parameter
+    /// type. A future packed field whose bound is guarded at one entry point
+    /// and forgotten at another fails here.
+    ///
+    /// `levelAt` is deliberately absent. It takes no `capacity` and makes no
+    /// claim about `fill`, so it has nothing to disagree with.
+    function testPackedEntryPointsAnswerOnExactlyTheFillableDomain(
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
+        uint256 leakRate
+    ) external {
+        if (capacity > LEAKY_BUCKET_LEVEL_MAX) {
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+            this.externalCheckCapacity(capacity);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+            this.externalHeadroomAt(checkpoint, timestamp, capacity, leakRate);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+            this.externalFillableAt(checkpoint, timestamp, capacity, leakRate, 0);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
+            this.externalFill(checkpoint, timestamp, capacity, leakRate, 0);
+            return;
+        }
+
+        if (timestamp > LEAKY_BUCKET_TIMESTAMP_MAX) {
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+            this.externalCheckTimestamp(timestamp);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+            this.externalHeadroomAt(checkpoint, timestamp, capacity, leakRate);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+            this.externalFillableAt(checkpoint, timestamp, capacity, leakRate, 0);
+            // A zero amount fits in every bucket, at or over capacity alike, so
+            // the only thing left that can stop this fill is the second it was
+            // asked to record.
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+            this.externalFill(checkpoint, timestamp, capacity, leakRate, 0);
+            return;
+        }
+
+        // Inside the domain every one of them answers, and what `headroomAt`
+        // names is what `fill` takes.
+        uint256 headroom = LibLeakyBucketCheckpoint.headroomAt(checkpoint, timestamp, capacity, leakRate);
+        LibLeakyBucketCheckpoint.fillableAt(checkpoint, timestamp, capacity, leakRate, headroom);
+        LibLeakyBucketCheckpoint.fill(checkpoint, timestamp, capacity, leakRate, headroom);
+    }
+
+    /// Both sides of the codec's horizon, one second apart, pinned as literals
+    /// because a boundary is not something to leave to a fuzzer.
+    ///
+    /// A bucket holding `LEAKY_BUCKET_TIMESTAMP_MAX` units at the epoch,
+    /// leaking one unit a second, asked when the widest storable capacity would
+    /// fit: it has to empty completely first, which takes exactly
+    /// `LEAKY_BUCKET_TIMESTAMP_MAX` seconds. That is the last second this codec
+    /// can record, so it is an answer, and `fill` honours it there.
+    ///
+    /// One unit more in the bucket and the wait is one second longer, which is
+    /// a second the codec cannot record and `fill` can therefore never be
+    /// called at. That is never, not a date. And it really is never: at the
+    /// last recordable second the amount is still one unit too big.
+    function testFillableAtIsClampedExactlyAtTheHorizon() external {
+        uint256 capacity = LEAKY_BUCKET_LEVEL_MAX;
+
+        uint256 atHorizon = LibLeakyBucketCheckpoint.pack(LEAKY_BUCKET_TIMESTAMP_MAX, 0);
+        assertEq(LibLeakyBucketCheckpoint.fillableAt(atHorizon, 0, capacity, 1, capacity), LEAKY_BUCKET_TIMESTAMP_MAX);
+        LibLeakyBucketCheckpoint.fill(atHorizon, LEAKY_BUCKET_TIMESTAMP_MAX, capacity, 1, capacity);
+
+        uint256 pastHorizon = LibLeakyBucketCheckpoint.pack(LEAKY_BUCKET_TIMESTAMP_MAX + 1, 0);
+        assertEq(LibLeakyBucketCheckpoint.fillableAt(pastHorizon, 0, capacity, 1, capacity), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, 1, capacity));
+        this.externalFill(pastHorizon, LEAKY_BUCKET_TIMESTAMP_MAX, capacity, 1, capacity);
+
+        // The core, which has the whole word to name a second in, does answer
+        // with that date. The narrowing is the codec's, and it is the codec's
+        // because the codec is the one that has to write the second down.
+        assertEq(
+            LibLeakyBucket.fillableAt(LEAKY_BUCKET_TIMESTAMP_MAX + 1, 0, 0, capacity, 1, capacity),
+            LEAKY_BUCKET_TIMESTAMP_MAX + 1
+        );
+    }
+
+    /// `fillableAt` and `fill` agree at every input, in both directions.
+    ///
+    /// Whatever second it names is one the codec can record and one at which
+    /// `fill` takes the amount it was asked about — so a scheduler or a
+    /// frontend acting on the answer can always execute it. And whenever it
+    /// says never, never is the truth rather than a clamp hiding a real wait:
+    /// at the last second the codec can record, the amount still does not fit.
+    function testPackedFillableAtIsASecondFillHonours(
+        uint192 level,
+        uint64 checkpoint,
+        uint64 timestamp,
+        uint192 capacity,
+        uint256 leakRate,
+        uint256 amount
+    ) external {
+        uint256 packed = LibLeakyBucketCheckpoint.pack(level, checkpoint);
+        uint256 at = LibLeakyBucketCheckpoint.fillableAt(packed, timestamp, capacity, leakRate, amount);
+
+        if (at == type(uint256).max) {
+            uint256 levelThen = LibLeakyBucketCheckpoint.levelAt(packed, LEAKY_BUCKET_TIMESTAMP_MAX, leakRate);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, levelThen, amount));
+            this.externalFill(packed, LEAKY_BUCKET_TIMESTAMP_MAX, capacity, leakRate, amount);
+            return;
+        }
+
+        assertLe(at, LEAKY_BUCKET_TIMESTAMP_MAX);
+        LibLeakyBucketCheckpoint.fill(packed, at, capacity, leakRate, amount);
+    }
+
+    /// The error identities are a published surface: a consumer that catches a
+    /// rejection, an indexer, or a frontend decoding a failed simulation all
+    /// match on the four byte selector, which is the hash of the signature.
+    /// Every other test here names the errors symbolically, so the selector the
+    /// suite expects is recomputed from whatever the signature currently is —
+    /// a parameter added, removed, reordered or retyped keeps the suite green
+    /// while silently changing what consumers decode.
+    ///
+    /// The packed layout is already pinned this way, as literals, by
+    /// `testLayoutIsLevelHighTimestampLow`. This is the same pin on the other
+    /// half of the published surface, so a change to an error's identity has to
+    /// be made here, deliberately, where it can be recognised as the breaking
+    /// change it is and released as one.
+    ///
+    /// The `bytes32` casts are because forge-std has no `bytes4` overload of
+    /// `assertEq`.
+    function testErrorSelectorsArePinnedToTheirSignatures() external pure {
+        assertEq(
+            bytes32(LeakyBucketCapacityExceeded.selector),
+            bytes32(bytes4(keccak256("LeakyBucketCapacityExceeded(uint256,uint256,uint256)")))
+        );
+        assertEq(
+            bytes32(LeakyBucketCapacityOverflow.selector),
+            bytes32(bytes4(keccak256("LeakyBucketCapacityOverflow(uint256)")))
+        );
+        assertEq(
+            bytes32(LeakyBucketLevelOverflow.selector), bytes32(bytes4(keccak256("LeakyBucketLevelOverflow(uint256)")))
+        );
+        assertEq(
+            bytes32(LeakyBucketTimestampOverflow.selector),
+            bytes32(bytes4(keccak256("LeakyBucketTimestampOverflow(uint256)")))
+        );
+    }
+
+    /// A `timestamp` the packed field cannot hold is refused BY NAME, and
+    /// nothing is stored. Failing closed at an unreachable date is the choice
+    /// `pack` documents, and `fill` inherits it — but `fill`'s own docstring
+    /// enumerated its reverts and omitted this one, so a caller writing a
+    /// `try`/`catch` from that list would not handle it.
+    ///
+    /// The amount is zero, so nothing but the second can be what refuses it:
+    /// a zero fill fits in every bucket, at or over capacity alike.
+    function testFillRevertsOnATimestampItCannotStore(
+        uint192 level,
+        uint64 checkpoint,
+        uint256 timestamp,
+        uint192 capacity,
+        uint256 leakRate
+    ) external {
+        timestamp = bound(timestamp, LEAKY_BUCKET_TIMESTAMP_MAX + 1, type(uint256).max);
+        uint256 packed = LibLeakyBucketCheckpoint.pack(level, checkpoint);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+        this.externalFill(packed, timestamp, capacity, leakRate, 0);
+    }
+
+    /// The other half of "a zero word is a valid initial state", asserted
+    /// rather than described because the library now warns about it: the codec
+    /// cannot tell a *cleared* slot from an untouched one, so `delete` on a
+    /// bucket is a full refund of whatever was outstanding rather than cleanup.
+    ///
+    /// A bucket burst to its whole capacity at t=1000 offers nothing at t=1000.
+    /// Cleared, it offers the entire capacity at that same second, with no time
+    /// elapsed in between and nothing in the word to say it was ever used. The
+    /// per-burst bound is per slot, and slots are erasable.
+    function testAClearedSlotIsAFullRefundAtTheSameSecond() external pure {
+        uint256 capacity = 3600e18;
+        uint256 leakRate = 1e18;
+
+        uint256 full = LibLeakyBucketCheckpoint.fill(0, 1000, capacity, leakRate, capacity);
+        assertEq(LibLeakyBucketCheckpoint.headroomAt(full, 1000, capacity, leakRate), 0);
+
+        // `delete sBuckets[minter]` is exactly this: the word becomes zero.
+        uint256 cleared = 0;
+        assertEq(LibLeakyBucketCheckpoint.headroomAt(cleared, 1000, capacity, leakRate), capacity);
+
+        // And it is the same word an untouched slot holds, so no read here can
+        // distinguish the two. The warning is a warning because the codec
+        // cannot enforce it.
+        assertEq(cleared, LibLeakyBucketCheckpoint.pack(0, 0));
+    }
+
+    /// The negative control for the one claim that justifies the codec
+    /// existing at all.
+    ///
+    /// `LibLeakyBucket.fillAt` returns a level that belongs to the timestamp it
+    /// was evaluated at. The library header above, `LibLeakyBucket.fillAt`'s own
+    /// NatSpec and the README all say the same thing about storing that level
+    /// while leaving the old checkpoint in place: it "credits the same leak
+    /// again on the next call, and the cap quietly stops binding". Every harness
+    /// in this repo writes the checkpoint correctly, so until now the claim was
+    /// prose in three places and an assertion in none — the suite showed that
+    /// the correct shape is correct, which is a different and much weaker claim
+    /// than that the incorrect shape is incorrect.
+    ///
+    /// Both shapes below run the identical policy, from the identical starting
+    /// state, through the identical call sequence. The only difference between
+    /// them is the write the forgetful shape never makes.
+    ///
+    /// Capacity 3600e18, leaking 1e18 a second, both empty at t=1000.
+    /// - t=1000: both burst the whole capacity, both report zero headroom.
+    /// - t=1900: 900 seconds have leaked. Both report 900e18 and AGREE, so
+    ///   nothing has diverged yet and the next step is the whole measurement.
+    /// - t=1900: both take exactly the 900e18 they were offered, so both store
+    ///   the same level of 3600e18.
+    /// - t=1900: the codec reports 0, because the word it returned carries the
+    ///   second its level belongs to. The forgetful shape reports 900e18 — the
+    ///   same 900 seconds of leak credited a second time, in the very second the
+    ///   bucket was filled back to the top.
+    ///
+    /// A quarter of the capacity, handed out to nobody who waited for it, and
+    /// it is exactly `(codecCheckpoint - forgetfulCheckpoint) * leakRate`, which
+    /// is the general law this number is one instance of.
+    function testDroppingTheCheckpointWriteCreditsTheSameLeakTwice() external pure {
+        uint256 capacity = 3600e18;
+        uint256 leakRate = 1e18;
+
+        // The codec: level and timestamp in one word, so a caller cannot write
+        // one without the other.
+        uint256 codec = LibLeakyBucketCheckpoint.pack(0, 1000);
+        // The mistake the codec exists to remove: a level and a checkpoint the
+        // caller keeps apart, and has to remember to write both of.
+        uint256 forgetfulLevel = 0;
+        uint256 forgetfulCheckpoint = 1000;
+
+        codec = LibLeakyBucketCheckpoint.fill(codec, 1000, capacity, leakRate, capacity);
+        forgetfulLevel = LibLeakyBucket.fillAt(forgetfulLevel, forgetfulCheckpoint, 1000, capacity, leakRate, capacity);
+        // The bug, in one line: `forgetfulCheckpoint = 1000;` never happens.
+        // At this second it would be a no-op anyway, which is exactly what makes
+        // it so easy to leave out and so quiet when it is left out.
+
+        assertEq(LibLeakyBucketCheckpoint.headroomAt(codec, 1000, capacity, leakRate), 0);
+        assertEq(LibLeakyBucket.headroomAt(forgetfulLevel, forgetfulCheckpoint, 1000, capacity, leakRate), 0);
+
+        // 900 seconds later, still identical.
+        assertEq(LibLeakyBucketCheckpoint.headroomAt(codec, 1900, capacity, leakRate), 900e18);
+        assertEq(LibLeakyBucket.headroomAt(forgetfulLevel, forgetfulCheckpoint, 1900, capacity, leakRate), 900e18);
+
+        // Both take exactly the headroom they were offered.
+        codec = LibLeakyBucketCheckpoint.fill(codec, 1900, capacity, leakRate, 900e18);
+        forgetfulLevel = LibLeakyBucket.fillAt(forgetfulLevel, forgetfulCheckpoint, 1900, capacity, leakRate, 900e18);
+
+        // Same level on both sides. The checkpoint is the whole of the
+        // difference, which is what makes the divergence below attributable to
+        // the dropped write and to nothing else.
+        (uint256 codecLevel, uint256 codecCheckpoint) = LibLeakyBucketCheckpoint.unpack(codec);
+        assertEq(codecLevel, forgetfulLevel);
+        assertEq(codecLevel, 3600e18);
+        assertEq(codecCheckpoint, 1900);
+        assertEq(forgetfulCheckpoint, 1000);
+
+        // The codec is full at that second.
+        assertEq(LibLeakyBucketCheckpoint.headroomAt(codec, 1900, capacity, leakRate), 0);
+
+        // The forgetful shape credits the same 900 seconds all over again.
+        uint256 unearned = LibLeakyBucket.headroomAt(forgetfulLevel, forgetfulCheckpoint, 1900, capacity, leakRate);
+        assertEq(unearned, 900e18);
+        assertEq(unearned, (codecCheckpoint - forgetfulCheckpoint) * leakRate);
+    }
+
+    /// The same divergence as an exact law over the whole domain rather than one
+    /// worked example, because "a one line mistake with no symptom until it is
+    /// exploited" is a claim about every input, not about 3600e18 at t=1900.
+    ///
+    /// Both shapes take the same new level, from the same `fillAt` call with the
+    /// same arguments — asserted here rather than assumed — so the stored
+    /// checkpoint is the whole of the difference between them.
+    ///
+    /// Two statements about that difference:
+    ///
+    /// - It is never stricter. `fill` stores `max(timestamp,
+    ///   checkpointTimestamp)`, which is never behind the checkpoint the
+    ///   forgetful shape keeps, so the forgetful shape always measures at least
+    ///   as much elapsed time, credits at least as much leak, reads at most the
+    ///   level, and therefore offers at least the headroom. `assertGe` rather
+    ///   than `assertGt` because the two genuinely agree wherever the checkpoint
+    ///   did not move or the leak saturates.
+    /// - Exactly how much less strict, which is the number the prose never gave:
+    ///   the forgetful bucket is the codec's bucket fast forwarded by precisely
+    ///   the seconds the dropped write failed to record. Read the codec `delta`
+    ///   seconds into the future and it answers what the forgetful shape answers
+    ///   now, at every second and every rate, saturation included, because both
+    ///   sides reduce to the same elapsed time.
+    function testDroppingTheCheckpointWriteIsTheCodecFastForwarded(
+        uint192 level,
+        uint64 checkpoint,
+        uint64 timestamp,
+        uint192 capacity,
+        uint256 leakRate,
+        uint256 amount,
+        uint64 readAt
+    ) external pure {
+        uint256 packed = LibLeakyBucketCheckpoint.pack(level, checkpoint);
+        amount = bound(amount, 0, LibLeakyBucketCheckpoint.headroomAt(packed, timestamp, capacity, leakRate));
+
+        uint256 codec = LibLeakyBucketCheckpoint.fill(packed, timestamp, capacity, leakRate, amount);
+        // The mistake: the level is written back, the checkpoint is not.
+        uint256 forgetfulLevel = LibLeakyBucket.fillAt(level, checkpoint, timestamp, capacity, leakRate, amount);
+
+        (uint256 codecLevel, uint256 codecCheckpoint) = LibLeakyBucketCheckpoint.unpack(codec);
+        assertEq(codecLevel, forgetfulLevel);
+
+        uint256 forgetfulHeadroom = LibLeakyBucket.headroomAt(forgetfulLevel, checkpoint, readAt, capacity, leakRate);
+
+        assertGe(forgetfulHeadroom, LibLeakyBucketCheckpoint.headroomAt(codec, readAt, capacity, leakRate));
+
+        uint256 delta = codecCheckpoint - checkpoint;
+        assertEq(forgetfulHeadroom, LibLeakyBucketCheckpoint.headroomAt(codec, readAt + delta, capacity, leakRate));
     }
 }
