@@ -59,10 +59,9 @@ error LeakyBucketLevelOverflow(uint256 level);
 /// for one reason, written into its own NatSpec.
 ///
 /// Everything else here is `private`, because everything else here is a step of
-/// `fill` rather than a thing to call. Every exported symbol is surface an
-/// auditor has to read and a caller can misuse, on a library whose entire
-/// purpose is to be what a compromised minter cannot get past, so the default
-/// is that it is not exported.
+/// `fill` rather than a thing to call. Every exported symbol is one a caller can
+/// misuse, on a library whose entire purpose is to be what a compromised minter
+/// cannot get past, so the default is that it is not exported.
 ///
 /// ## Before a fill, and after it
 ///

@@ -120,5 +120,28 @@
       "filed": [],
       "notes": "THREE SURVIVORS, recorded rather than removed, and they are a finding rather than a gap in the tests. M55 (level guard never fires), M56 (level guard raises the capacity error) and M57 (timestamp packed unchecked) all survive because pack's REJECTION paths cannot be reached through fill, which is its only caller and which bounds both fields first: checkFillableDomain refuses a capacity above LEAKY_BUCKET_LEVEL_MAX and a timestamp above LEAKY_BUCKET_TIMESTAMP_MAX, unpack can only produce a level and a checkpoint already inside their fields, and fillAt returns at most the larger of that level and the capacity. No test can reach them without exposing pack, which would add the surface this release exists to remove. M54, the off-by-one that would reject a legitimate capacity exactly at LEAKY_BUCKET_LEVEL_MAX, IS killed, so the guard's boundary is exercised even though its rejection is not. The adversarial question was asked of all three: the current behaviour is correct, the guards are simply unreachable today. They are kept deliberately as defence against a future second caller, a decision made by the repository owner after this redundancy was measured. This entry is the evidence for that redundancy and replaces the prose argument that previously sat in pack's NatSpec, which was removed for asserting a property of the call graph that nothing enforces."
     }
+  },
+  {
+    "timestamp": "2026-09-22T14:47:08Z",
+    "commit": "d2dbc9dbcd9a0e074db44f6608e5bc3971848d1c",
+    "testsAfterCommit": "d2dbc9dbcd9a0e074db44f6608e5bc3971848d1c",
+    "publishedTag": "sol-v0.1.4",
+    "commitsAheadOfTag": 15,
+    "scope": "re-probe after a comment-only edit to src/lib/LibLeakyBucket.sol (#108). No executable code changed; the mutants and their targets are identical to the entry above.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 57,
+      "mutantsKilledByPreExistingSuite": 54,
+      "mutantsSurvivedPreExistingSuite": 3,
+      "mutantsKilledAfter": 54,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 55,
+      "testsAfter": 55,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Verdicts identical to the previous entry, as expected: the only change was three lines of NatSpec. Recorded because check-scan-freshness.sh diffs the src/ and test/ trees byte for byte and cannot tell a comment from a statement, so a documentation fix inside src/ costs a full 57-mutant probe to earn the record back. That is the gate behaving correctly rather than a defect - a check that tried to distinguish comments from code would be a check that could be fooled. Survivors are unchanged and unchanged in reason: M55, M56 and M57 are pack's rejection paths, which fill bounds out of reach before pack is called. M54, the off-by-one that would refuse a legitimate capacity at LEAKY_BUCKET_LEVEL_MAX, is killed."
+    }
   }
 ]
