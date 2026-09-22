@@ -1,0 +1,18 @@
+# The published package carries no manifest, so the README's install block is
+# the only thing telling a consumer which dependencies to install alongside it.
+# Nothing else in CI reads that block; this checks it against what `src/`
+# actually imports.
+name: documented-pins
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  documented-pins:
+    runs-on: ubuntu-latest
+    steps:
+      # Shared composite so the `actions/checkout` SHA stays pinned in one
+      # place org-wide. The check reads only the working tree, so the default
+      # shallow checkout is enough and no nix shell is needed.
+      - uses: rainlanguage/rainix/.github/actions/checkout@main
+      - run: ./audit/check-documented-pins.sh
