@@ -298,4 +298,48 @@ contract LibLeakyBucketTest is Test {
         amount = bound(amount, 0, headroom);
         assertEq(LibLeakyBucket.fillableAt(level, checkpoint, timestamp, capacity, leakRate, amount), timestamp);
     }
+
+    /// The two boundaries of `fillableAt` that the bounded fuzz tests step
+    /// around, worked as concrete numbers.
+    ///
+    /// Neither is an uncovered behaviour: the fuzz test already kills a guard
+    /// flipped to `>=` and both a floored and a truncated wait. What it does
+    /// not do is state the answers. It finds them by drawing an input that
+    /// happens to sit on the boundary, which depends on the seed, and it never
+    /// writes down which way the division rounds. `amount == capacity` is
+    /// excluded by construction from the two bounded tests either side of it,
+    /// and every other concrete example of `fillableAt` in the suite picks a
+    /// deficit that is an exact multiple of the rate, where ceiling and floor
+    /// agree. So the rounding direction is nowhere in writing, and the
+    /// boundary is only ever hit by chance.
+    function testFillableAtBoundariesOfAmountAndRounding() external pure {
+        uint256 capacity = 3600e18;
+        uint256 level = 3600e18;
+        uint256 checkpoint = 1000;
+
+        // `amount == capacity` is the EQUAL side of the `amount > capacity`
+        // guard: possible, and it needs the bucket completely empty. One
+        // capacity out of a full bucket at one unit a second is 3600 seconds.
+        uint256 at = LibLeakyBucket.fillableAt(level, checkpoint, checkpoint, capacity, 1e18, capacity);
+        assertEq(at, checkpoint + 3600);
+        assertEq(LibLeakyBucket.levelAt(level, checkpoint, at, 1e18), 0);
+        assertEq(LibLeakyBucket.headroomAt(level, checkpoint, at, capacity, 1e18), capacity);
+        assertLt(LibLeakyBucket.headroomAt(level, checkpoint, at - 1, capacity, 1e18), capacity);
+
+        // And one unit past the capacity is the strict side: never. The two
+        // together are what make the guard `>` rather than `>=`.
+        assertEq(
+            LibLeakyBucket.fillableAt(level, checkpoint, checkpoint, capacity, 1e18, capacity + 1), type(uint256).max
+        );
+
+        // The wait rounds UP. At 7e18 a second a full 3600e18 bucket drains in
+        // 514.28... seconds, so the answer is the 515th second and not the
+        // 514th. A floor division would name 514, where 2e18 is still
+        // outstanding and one capacity does not fit.
+        uint256 odd = LibLeakyBucket.fillableAt(level, checkpoint, checkpoint, capacity, 7e18, capacity);
+        assertEq(odd, checkpoint + 515);
+        assertEq(LibLeakyBucket.levelAt(level, checkpoint, checkpoint + 514, 7e18), 2e18);
+        assertLt(LibLeakyBucket.headroomAt(level, checkpoint, checkpoint + 514, capacity, 7e18), capacity);
+        assertEq(LibLeakyBucket.headroomAt(level, checkpoint, odd, capacity, 7e18), capacity);
+    }
 }
