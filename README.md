@@ -90,8 +90,18 @@ Two properties make policy changes safe to land at an arbitrary moment:
 
 - **Lowering `capacity` below an outstanding level binds immediately.** Headroom
   reads zero, every non zero fill is rejected, and the bucket leaks down under
-  the new policy until it fits. No migration, no fill needed to activate it, and
-  no window for the minter to front run the change.
+  the new policy until it fits. No migration and no fill is needed to activate
+  it, so between the write landing and the new cap binding there is no window
+  for a minter to slip through.
+
+  That is the only window this library closes. The window _before_ the write is
+  governance's, and it is real: a cut queued behind a public timelock is visible
+  for the whole delay, and a minter that is already compromised can take one
+  full **old** `capacity` per burst, paced by the old `leakRate`, right up to
+  the block the cut executes. A cut is usually incident response against
+  precisely that minter, so size the delay on the assumption that the minter
+  keeps drawing at the old policy for its whole length, or keep a pause or
+  revoke path that does not sit behind the same delay.
 - **An unconfigured minter can mint nothing.** A zero capacity is a closed door,
   so forgetting to configure a minter fails closed.
 
