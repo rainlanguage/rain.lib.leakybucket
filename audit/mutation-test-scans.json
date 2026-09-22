@@ -212,5 +212,28 @@
       "filed": [],
       "notes": "Survivors M55, M56, M57 are pack's own guards, which fill bounds out of reach before pack is called; unchanged from the previous four records. M60 killed by testFillRejectsZeroAmount and testHeadroomIsAlwaysFillable. Isolated clone, green 56 test baseline, 0 harness errors."
     }
+  },
+  {
+    "timestamp": "2026-09-22T19:45:39Z",
+    "commit": "8d5b5bae286423121d738db7a38479e603b90108",
+    "testsAfterCommit": "8d5b5bae286423121d738db7a38479e603b90108",
+    "publishedTag": "sol-v0.3.0",
+    "commitsAheadOfTag": 1,
+    "scope": "re-probe after pack and unpack were exported (8d5b5ba). Same 60 mutants against src/lib/LibLeakyBucket.sol.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 60,
+      "mutantsKilledByPreExistingSuite": 60,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 60,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 59,
+      "testsAfter": 59,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "M55, M56 and M57, pack's own guards, survived the previous five records because fill bounded them out of reach; pack is now exported and testPackRevertsOnAWideLevel, testPackRevertsOnAWideTimestamp and testPackUnpackRoundTrip kill them. Isolated clone, green 59 test baseline, 0 harness errors."
+    }
   }
 ]
