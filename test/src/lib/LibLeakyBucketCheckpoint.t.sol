@@ -252,10 +252,29 @@ contract LibLeakyBucketCheckpointTest is Test {
 
     /// The layout is the level in the high bits and the timestamp in the low
     /// ones, stated as a value rather than left to the constants.
+    ///
+    /// Two things are pinned here and they are not the same thing. The three
+    /// literals are the layout this version of the codec ships: change the width
+    /// and they fail, by design, so the change is deliberate rather than
+    /// incidental. The four assertions after them are what the constants owe
+    /// each other at *any* width, and they are what makes the two maxima
+    /// derived quantities rather than two more numbers to keep in step by hand.
     function testLayoutIsLevelHighTimestampLow() external pure {
         assertEq(LEAKY_BUCKET_TIMESTAMP_BITS, 64);
         assertEq(LEAKY_BUCKET_TIMESTAMP_MAX, type(uint64).max);
         assertEq(LEAKY_BUCKET_LEVEL_MAX, type(uint192).max);
+        // The invariant the codec rests on, stated rather than implied. The
+        // three literals above are what this test pins; these four are what
+        // they owe each other, and they hold at any width rather than only at
+        // this one. The timestamp max IS the mask `unpack` applies, the level
+        // max IS the word less the timestamp field, and together the two fields
+        // tile the word exactly: no gap, no overlap.
+        assertEq(LEAKY_BUCKET_TIMESTAMP_MAX, (uint256(1) << LEAKY_BUCKET_TIMESTAMP_BITS) - 1);
+        assertEq(LEAKY_BUCKET_LEVEL_MAX, type(uint256).max >> LEAKY_BUCKET_TIMESTAMP_BITS);
+        assertEq(
+            (LEAKY_BUCKET_LEVEL_MAX << LEAKY_BUCKET_TIMESTAMP_BITS) | LEAKY_BUCKET_TIMESTAMP_MAX, type(uint256).max
+        );
+        assertEq((LEAKY_BUCKET_LEVEL_MAX << LEAKY_BUCKET_TIMESTAMP_BITS) & LEAKY_BUCKET_TIMESTAMP_MAX, 0);
         assertEq(LibLeakyBucketCheckpoint.pack(1, 0), 1 << 64);
         assertEq(LibLeakyBucketCheckpoint.pack(0, 1), 1);
         assertEq(LibLeakyBucketCheckpoint.pack(LEAKY_BUCKET_LEVEL_MAX, LEAKY_BUCKET_TIMESTAMP_MAX), type(uint256).max);

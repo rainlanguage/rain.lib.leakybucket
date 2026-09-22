@@ -6,12 +6,27 @@ import {LibLeakyBucket} from "./LibLeakyBucket.sol";
 
 /// @dev Bits the timestamp occupies in a packed checkpoint, in the low end of
 /// the word.
+///
+/// The one free parameter of the layout. Both maxima below are derived from it
+/// rather than spelled independently, so changing it moves the whole codec
+/// coherently instead of leaving two literals to be re-derived by hand.
 uint256 constant LEAKY_BUCKET_TIMESTAMP_BITS = 64;
 
 /// @dev Largest timestamp a packed checkpoint can hold, in seconds. Around
 /// 5.8e11 years, so it is not a deadline in any sense that needs managing; it
 /// exists so the width is stated rather than assumed.
-uint256 constant LEAKY_BUCKET_TIMESTAMP_MAX = type(uint64).max;
+///
+/// Derived rather than spelled, because it is also the mask `unpack` applies:
+/// every bit below `LEAKY_BUCKET_TIMESTAMP_BITS` and nothing above it. Written
+/// as `type(uint64).max` it is correct only while the width happens to be 64,
+/// and a maintainer narrowing the width would get a mask wider than the field,
+/// which reads level bits back as part of the timestamp.
+///
+/// The `uint256(1)` is load bearing rather than noise: a bare `1` on the left of
+/// the shift trips `forge lint`'s `incorrect-shift` rule, and the CI gate runs
+/// it with `-D warnings`. It also states the word the shift happens in, which is
+/// the whole point of the constant.
+uint256 constant LEAKY_BUCKET_TIMESTAMP_MAX = (uint256(1) << LEAKY_BUCKET_TIMESTAMP_BITS) - 1;
 
 /// @dev Largest level a packed checkpoint can hold, and therefore the largest
 /// `capacity` that can be enforced through this codec. Around 6.2e57, which is
@@ -19,7 +34,15 @@ uint256 constant LEAKY_BUCKET_TIMESTAMP_MAX = type(uint64).max;
 /// a `capacity` rejects one above this, and `checkCapacity` is the same guard
 /// on its own so a governance setter can refuse it at the moment it is set
 /// rather than at the moment someone tries to mint.
-uint256 constant LEAKY_BUCKET_LEVEL_MAX = type(uint192).max;
+///
+/// Derived for the same reason: the level field is exactly the word less the
+/// timestamp field, so `pack`'s `unchecked` shift can neither truncate a level
+/// this bound permits nor reach a timestamp bit. Written as
+/// `type(uint192).max` it is correct only while the width happens to be 64, and
+/// a maintainer widening the width would get a bound whose shifted value
+/// overflows the word, so `pack` would silently truncate the level it just
+/// accepted.
+uint256 constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> LEAKY_BUCKET_TIMESTAMP_BITS;
 
 /// @dev Thrown when the capacity in force is above `LEAKY_BUCKET_LEVEL_MAX`,
 /// which is a level this codec cannot store and therefore a cap it cannot
