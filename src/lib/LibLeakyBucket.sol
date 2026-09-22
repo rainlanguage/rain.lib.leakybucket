@@ -187,6 +187,11 @@ library LibLeakyBucket {
     ///
     /// Saturates at zero, so a level above the capacity reports no room rather
     /// than underflowing to an enormous allowance.
+    ///
+    /// Not free: the legacy optimizer does not inline this, so each of the
+    /// three callers pays one extra internal jump, measured at 22 gas on a
+    /// steady state `fill` of ~8900. That is the price of the three agreeing by
+    /// construction, and it is deliberate.
     /// @param capacity The bucket capacity.
     /// @param levelNow The level as at the timestamp of interest.
     /// @return The amount that fits.
