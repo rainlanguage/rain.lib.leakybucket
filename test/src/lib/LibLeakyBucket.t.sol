@@ -240,7 +240,7 @@ contract LibLeakyBucketTest is Test, LeakyBucketScratch {
     //                        The word that is stored                    //
     // ---------------------------------------------------------------- //
 
-    /// The property the packing exists for: a successful fill writes a word
+    /// The property the packing exists for: a successful fill returns a word
     /// that carries the new level *and* a timestamp that level actually belongs
     /// to.
     function testFillCarriesTheTimestampWithTheLevel(
