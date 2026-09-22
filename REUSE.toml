@@ -5,6 +5,7 @@ path = [
   ".github/workflows/**/",
   "audit/**",
   ".audit/**",
+  "CLAUDE.md",
   ".gitignore",
   "README.md",
   "flake.lock",
