@@ -197,6 +197,27 @@ library LibLeakyBucket {
         return leak(level, LibSaturatingMath.saturatingSub(timestamp, checkpoint), leakRate);
     }
 
+    /// Headroom against `capacity` for a level that has already been evaluated
+    /// at the timestamp of interest. The single definition of "what fits",
+    /// shared by `headroomAt`, `fillAt` and `fillableAt` so that the three
+    /// cannot drift apart. They cannot share `headroomAt` itself, because two
+    /// of them already hold the level and would pay a second `levelAt` for it,
+    /// so the shared piece is the saturation rather than the public read.
+    ///
+    /// Saturates at zero, so a level above the capacity reports no room rather
+    /// than underflowing to an enormous allowance.
+    ///
+    /// Not free: the legacy optimizer does not inline this, so each of the
+    /// three callers pays one extra internal jump, measured at 22 gas on a
+    /// steady state `fill` of ~8900. That is the price of the three agreeing by
+    /// construction, and it is deliberate.
+    /// @param capacity The bucket capacity.
+    /// @param levelNow The level as at the timestamp of interest.
+    /// @return The amount that fits.
+    function headroomFrom(uint256 capacity, uint256 levelNow) private pure returns (uint256) {
+        return LibSaturatingMath.saturatingSub(capacity, levelNow);
+    }
+
     /// The largest amount that `fillAt` would accept at `timestamp`.
     ///
     /// Saturates at zero, which is what makes lowering `capacity` below a level
@@ -215,7 +236,7 @@ library LibLeakyBucket {
         pure
         returns (uint256)
     {
-        return LibSaturatingMath.saturatingSub(capacity, levelAt(level, checkpoint, timestamp, leakRate));
+        return headroomFrom(capacity, levelAt(level, checkpoint, timestamp, leakRate));
     }
 
     /// Fill the bucket with `amount` at `timestamp`, returning the new level.
@@ -254,7 +275,7 @@ library LibLeakyBucket {
         uint256 amount
     ) internal pure returns (uint256) {
         uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);
-        uint256 headroom = LibSaturatingMath.saturatingSub(capacity, levelNow);
+        uint256 headroom = headroomFrom(capacity, levelNow);
         if (amount > headroom) {
             revert LeakyBucketCapacityExceeded(capacity, levelNow, amount);
         }
@@ -297,10 +318,12 @@ library LibLeakyBucket {
             return type(uint256).max;
         }
         uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);
-        // Exactly the test `fillAt` applies, so the two agree at every input.
-        // In particular a zero amount always fits, including when the bucket is
-        // already over capacity, and the answer is now rather than a wait.
-        if (amount <= LibSaturatingMath.saturatingSub(capacity, levelNow)) {
+        // Literally the test `fillAt` applies, through the same `headroomFrom`,
+        // so the two agree at every input by construction rather than by two
+        // copies of the saturation staying in step. In particular a zero amount
+        // always fits, including when the bucket is already over capacity, and
+        // the answer is now rather than a wait.
+        if (amount <= headroomFrom(capacity, levelNow)) {
             return timestamp;
         }
         uint256 target;
