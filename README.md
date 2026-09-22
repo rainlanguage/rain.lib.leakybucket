@@ -95,9 +95,9 @@ contract Token {
 }
 ```
 
-One library call, one `SSTORE`. The call reverts with
+One library call, then one `SSTORE` by the caller. The call reverts with
 `LeakyBucketCapacityExceeded(capacity, level, amount)` if the amount does not
-fit, and then nothing is stored.
+fit, and the revert takes the store with it.
 
 ### Governance is yours
 
@@ -248,13 +248,13 @@ only ever report a level at or above the true level, so it can only ever hand
 out _less_ headroom than reality.
 
 The write path has to keep what the read path refuses. A fill at a backwards
-clock stores **the later of that clock and the stored checkpoint**, never the
+clock returns **the later of that clock and the stored checkpoint**, never the
 earlier: crediting no leak for the backwards step and then recording the earlier
 second leaves the same interval to be measured again on the next read, which
 pays out exactly the headroom the saturation just declined. That makes the
 property above hold end to end and not only on a read. A caller cannot get this
-wrong, because `fill` writes the level and the second it belongs to as one word,
-itself; the caller never holds the word.
+wrong, because `fill` returns the level and the second it belongs to as one
+word; the caller stores that word whole or stores nothing.
 
 The library **reverts** rather than truncating on a `capacity` or a `timestamp`
 that does not fit the word, and it refuses them at the parameter rather than at

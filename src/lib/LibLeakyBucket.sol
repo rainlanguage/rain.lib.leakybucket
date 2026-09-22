@@ -415,7 +415,7 @@ library LibLeakyBucket {
     /// Revert unless `timestamp` is a second this library can record.
     ///
     /// The mirror of `checkCapacity` on the other packed field, and it exists
-    /// for the same reason. `fill` ends in `pack`, which cannot store a second
+    /// for the same reason. `fill` ends in `pack`, which cannot carry a second
     /// above `LEAKY_BUCKET_TIMESTAMP_MAX`, so a read that answered there would
     /// be naming an amount that `fill` refuses — the same disagreement between
     /// a read and a fill that `checkCapacity` exists to remove, on the other
@@ -437,7 +437,7 @@ library LibLeakyBucket {
     /// exactly where `fill` acts.**
     ///
     /// `fill` refuses two arguments outright, before any policy question is
-    /// asked, because the word it has to write cannot carry them: a `capacity`
+    /// asked, because the word it returns cannot carry them: a `capacity`
     /// wider than the level field, and a `timestamp` wider than the timestamp
     /// field. A read that answered at either would be making a promise `fill`
     /// breaks, so `headroomAt` refuses them first, here.
@@ -493,8 +493,8 @@ library LibLeakyBucket {
     ///
     /// ## Why this is exported at all
     ///
-    /// It is not here because a caller might like to know, and it is not a view
-    /// for frontends. It is here because **a caller metering one amount through
+    /// It is not here because a caller might like to know, and it is not a
+    /// convenience read for frontends. It is here because **a caller metering one amount through
     /// several buckets cannot otherwise say which of them refused it.**
     ///
     /// `fill` reverts with `LeakyBucketCapacityExceeded(capacity, level,
