@@ -2,6 +2,8 @@
 # at or above that. `rainix-sol` only ever builds it at 0.8.25, the bottom of
 # that range, so the promise is untested at the top. This builds it there.
 name: compiler-range
+env:
+  RAINIX_SHA: 8657b83b68f41957ab85da91132c3f652c1f32c0
 on:
   push:
     branches: [main]
@@ -10,11 +12,17 @@ jobs:
   top-of-range:
     runs-on: ubuntu-latest
     steps:
-      - uses: rainlanguage/rainix/.github/actions/checkout@main
+      # Shared nix + cachix CI preamble (checkout, nix-quick-install, Cachix,
+      # cache-nix-action), the same one every rainix-sol job opens with. `nix`
+      # is not on the runner image, so a plain checkout leaves every step below
+      # with `nix: command not found`.
+      - uses: rainlanguage/rainix/.github/actions/nix-cachix-setup@main
+        with:
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Install soldeer dependencies
-        run: nix develop github:rainlanguage/rainix/8657b83b68f41957ab85da91132c3f652c1f32c0#sol-shell -c forge soldeer install
+        run: nix develop github:rainlanguage/rainix/${{ env.RAINIX_SHA }}#sol-shell -c forge soldeer install
       # Build only, and only `src/`. The suite cannot run here: every test and
       # harness pins `=0.8.25`, as a concrete contract should, so `forge test`
       # at another version fails before it starts. This proves the caret's
       # claim that the library compiles, not that it behaves identically.
-      - run: nix develop github:rainlanguage/rainix/8657b83b68f41957ab85da91132c3f652c1f32c0#sol-shell -c env FOUNDRY_PROFILE=solc-range forge build --force
+      - run: nix develop github:rainlanguage/rainix/${{ env.RAINIX_SHA }}#sol-shell -c env FOUNDRY_PROFILE=solc-range forge build --force
