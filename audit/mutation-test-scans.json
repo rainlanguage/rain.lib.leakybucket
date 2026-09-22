@@ -74,5 +74,51 @@
       "filed": [],
       "notes": "Maintenance re-probe, not a discovery scan: the previous record described 6398377 and the merges invalidated it, which is what mutation-scan-freshness was failing on (and, through the publish gate's refusal to release a commit with a failed run, what was failing Package Release on main). Eleven of the 59 prior mutants were HARNESS-ERROR against the merged tree because the refactors moved their targets (M08-M11 and M19 through the headroomFrom extraction, M41 through fillableAt binding its result before the sentinel clamp, M48/M49 through the width constants becoming derived, M57-M59 through checkCapacity becoming checkFillableDomain); all eleven were retargeted to the current source with their intent preserved, and M11 and M57-M59 renamed where the refactor changed what the mutation now means. Eighteen new mutants (M60-M77) cover the behaviour that landed after 6398377 and had nothing targeting it. Result: 77/77 killed, 0 survived, 0 no-run, 0 harness errors, on a green 80-test baseline. Every one of the 18 new mutants was killed by the PRE-EXISTING suite, so this run added no tests and testsAfterCommit equals the scanned commit. Adversarial pass over the new behaviour raised no candidate: leakRatePer's floor division matches its documented 'rounds DOWN so the on chain rate is never faster than the policy', its shortfall is under one unit a second as claimed, and its zero-period panic is documented intent rather than an unhandled input."
     }
+  },
+  {
+    "timestamp": "2026-09-22T13:51:42Z",
+    "commit": "5f709ca810ad270d48c157b494efddcc471e3f08",
+    "testsAfterCommit": "5f709ca810ad270d48c157b494efddcc471e3f08",
+    "publishedTag": "sol-v0.1.4",
+    "commitsAheadOfTag": 8,
+    "scope": "whole repo after #105 reduced the public surface to fill, headroomAt, LEAKY_BUCKET_LEVEL_MAX and three errors. One library: src/lib/LibLeakyBucketCheckpoint.sol is deleted and everything collapsed into src/lib/LibLeakyBucket.sol, with leak, levelAt, headroomFrom, fillAt, pack, unpack, checkCapacity, checkTimestamp and checkFillableDomain now private. mutants.toml rebuilt from scratch against the single file.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 53,
+      "mutantsKilledByPreExistingSuite": 53,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 53,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 55,
+      "testsAfter": 55,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Rebuilt rather than retargeted. The previous mutants.toml carried 59 mutants of which six targeted src/lib/LibLeakyBucketCheckpoint.sol, now deleted, and the record before this one claimed 77 against a committed file defining 59 (issue #106). This entry does not inherit that: the 53 mutants here are the file at this commit, every target verified live by the probe reporting a verdict rather than HARNESS-ERROR. 53/53 killed, 0 survived, 0 no-run, 0 harness errors, on a green 55-test baseline. No tests were added for this scan, so testsAfterCommit equals the scanned commit. Deleted behaviour took its mutants with it: fillableAt at both layers, leakRatePer and the period constants, the packed levelAt, LeakyBucketLevelOverflow and pack's two guards."
+    }
+  },
+  {
+    "timestamp": "2026-09-22T14:13:42Z",
+    "commit": "b4a3ca2c3d75aa4a120ee75da215d3921ac62dce",
+    "testsAfterCommit": "b4a3ca2c3d75aa4a120ee75da215d3921ac62dce",
+    "publishedTag": "sol-v0.1.4",
+    "commitsAheadOfTag": 11,
+    "scope": "re-probe after pack's two overflow guards were restored, superseding the entry above it in this file. Four mutants added for the restored guards (M54-M57), 57 total, all against src/lib/LibLeakyBucket.sol.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 57,
+      "mutantsKilledByPreExistingSuite": 54,
+      "mutantsSurvivedPreExistingSuite": 3,
+      "mutantsKilledAfter": 54,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 55,
+      "testsAfter": 55,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "THREE SURVIVORS, recorded rather than removed, and they are a finding rather than a gap in the tests. M55 (level guard never fires), M56 (level guard raises the capacity error) and M57 (timestamp packed unchecked) all survive because pack's REJECTION paths cannot be reached through fill, which is its only caller and which bounds both fields first: checkFillableDomain refuses a capacity above LEAKY_BUCKET_LEVEL_MAX and a timestamp above LEAKY_BUCKET_TIMESTAMP_MAX, unpack can only produce a level and a checkpoint already inside their fields, and fillAt returns at most the larger of that level and the capacity. No test can reach them without exposing pack, which would add the surface this release exists to remove. M54, the off-by-one that would reject a legitimate capacity exactly at LEAKY_BUCKET_LEVEL_MAX, IS killed, so the guard's boundary is exercised even though its rejection is not. The adversarial question was asked of all three: the current behaviour is correct, the guards are simply unreachable today. They are kept deliberately as defence against a future second caller, a decision made by the repository owner after this redundancy was measured. This entry is the evidence for that redundancy and replaces the prose argument that previously sat in pack's NatSpec, which was removed for asserting a property of the call graph that nothing enforces."
+    }
   }
 ]

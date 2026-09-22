@@ -5,6 +5,15 @@ proof = '(\d+) tests passed, (\d+) failed'
 fail-pattern = '\[FAIL[^\]]*\] (\S+)'
 timeout-secs = 1800
 
+# The library is one file exporting `fill`, `headroomAt` and
+# `LEAKY_BUCKET_LEVEL_MAX`. Everything else it does is a private step of those
+# two, so every mutant below is observed through them — which is also the only
+# way a consumer can observe it.
+#
+# Grouped by the step being broken, in the order the entry points reach them:
+# the leak, the level, the headroom, the fill, the two domain guards, the codec,
+# and finally the entry points and the width constants.
+
 # ---------------- LibLeakyBucket.leak ----------------
 [[mutants]]
 name = "M01 leak: subtract operands swapped"
@@ -30,380 +39,390 @@ file = "src/lib/LibLeakyBucket.sol"
 target = 'return LibSaturatingMath.saturatingSub(level, LibSaturatingMath.saturatingMul(elapsed, leakRate));'
 replacement = 'return 0;'
 
+[[mutants]]
+name = "M05 leak: product wraps instead of saturating"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return LibSaturatingMath.saturatingSub(level, LibSaturatingMath.saturatingMul(elapsed, leakRate));'
+replacement = '''
+        unchecked {
+            return LibSaturatingMath.saturatingSub(level, elapsed * leakRate);
+        }'''
+
 # ---------------- LibLeakyBucket.levelAt ----------------
 [[mutants]]
-name = "M05 levelAt: elapsed operands swapped (backwards clock)"
+name = "M06 levelAt: elapsed operands swapped (backwards clock)"
 file = "src/lib/LibLeakyBucket.sol"
 target = 'return leak(level, LibSaturatingMath.saturatingSub(timestamp, checkpoint), leakRate);'
 replacement = 'return leak(level, LibSaturatingMath.saturatingSub(checkpoint, timestamp), leakRate);'
 
 [[mutants]]
-name = "M06 levelAt: checkpoint ignored, elapsed is the raw clock"
+name = "M07 levelAt: checkpoint ignored, elapsed is the raw clock"
 file = "src/lib/LibLeakyBucket.sol"
 target = 'return leak(level, LibSaturatingMath.saturatingSub(timestamp, checkpoint), leakRate);'
 replacement = 'return leak(level, timestamp, leakRate);'
 
 [[mutants]]
-name = "M07 levelAt: elapsed forced to zero"
+name = "M08 levelAt: elapsed forced to zero"
 file = "src/lib/LibLeakyBucket.sol"
 target = 'return leak(level, LibSaturatingMath.saturatingSub(timestamp, checkpoint), leakRate);'
 replacement = 'return leak(level, 0, leakRate);'
 
-# ---------------- LibLeakyBucket.headroomAt ----------------
 [[mutants]]
-name = "M08 headroomAt: operands swapped"
+name = "M09 levelAt: elapsed wraps instead of saturating at zero"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'return LibSaturatingMath.saturatingSub(capacity, levelAt(level, checkpoint, timestamp, leakRate));'
-replacement = 'return LibSaturatingMath.saturatingSub(levelAt(level, checkpoint, timestamp, leakRate), capacity);'
+target = 'return leak(level, LibSaturatingMath.saturatingSub(timestamp, checkpoint), leakRate);'
+replacement = '''
+        unchecked {
+            return leak(level, timestamp - checkpoint, leakRate);
+        }'''
+
+# ---------------- LibLeakyBucket.headroomFrom ----------------
+# The single definition of "what fits", shared by `headroomAt` and `fillAt`, so
+# breaking it here is supposed to break both at once.
+[[mutants]]
+name = "M10 headroomFrom: operands swapped"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return LibSaturatingMath.saturatingSub(capacity, levelNow);'
+replacement = 'return LibSaturatingMath.saturatingSub(levelNow, capacity);'
 
 [[mutants]]
-name = "M09 headroomAt: always full capacity"
+name = "M11 headroomFrom: always full capacity"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'return LibSaturatingMath.saturatingSub(capacity, levelAt(level, checkpoint, timestamp, leakRate));'
+target = 'return LibSaturatingMath.saturatingSub(capacity, levelNow);'
 replacement = 'return capacity;'
+
+[[mutants]]
+name = "M12 headroomFrom: underflows instead of saturating at zero"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return LibSaturatingMath.saturatingSub(capacity, levelNow);'
+replacement = '''
+        unchecked {
+            return capacity - levelNow;
+        }'''
 
 # ---------------- LibLeakyBucket.fillAt ----------------
 [[mutants]]
-name = "M10 fillAt: headroom from stale level, not levelNow"
+name = "M13 fillAt: no leak credited, the stored level is used as is"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'uint256 headroom = LibSaturatingMath.saturatingSub(capacity, levelNow);'
-replacement = 'uint256 headroom = LibSaturatingMath.saturatingSub(capacity, level);'
+target = 'uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);'
+replacement = 'uint256 levelNow = level;'
 
 [[mutants]]
-name = "M11 fillAt: headroom saturation removed, operands swapped"
+name = "M14 fillAt: headroom from the stale level, not levelNow"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'uint256 headroom = LibSaturatingMath.saturatingSub(capacity, levelNow);'
-replacement = 'uint256 headroom = LibSaturatingMath.saturatingSub(levelNow, capacity);'
+target = 'uint256 headroom = headroomFrom(capacity, levelNow);'
+replacement = 'uint256 headroom = headroomFrom(capacity, level);'
 
 [[mutants]]
-name = "M12 fillAt: guard off by one, exact headroom rejected"
+name = "M15 fillAt: guard off by one, exact headroom rejected"
 file = "src/lib/LibLeakyBucket.sol"
 target = 'if (amount > headroom) {'
 replacement = 'if (amount >= headroom) {'
 
 [[mutants]]
-name = "M13 fillAt: capacity guard removed entirely"
+name = "M16 fillAt: capacity guard removed entirely"
 file = "src/lib/LibLeakyBucket.sol"
 target = 'if (amount > headroom) {'
 replacement = 'if (false) {'
 
 [[mutants]]
-name = "M14 fillAt: revert reports stale level"
+name = "M17 fillAt: revert reports the stale level"
 file = "src/lib/LibLeakyBucket.sol"
 target = 'revert LeakyBucketCapacityExceeded(capacity, levelNow, amount);'
 replacement = 'revert LeakyBucketCapacityExceeded(capacity, level, amount);'
 
 [[mutants]]
-name = "M15 fillAt: fill dropped, level unchanged"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'return levelNow + amount;'
-replacement = 'return levelNow;'
-
-[[mutants]]
-name = "M16 fillAt: existing level discarded"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'return levelNow + amount;'
-replacement = 'return amount;'
-
-# ---------------- LibLeakyBucket.fillableAt ----------------
-[[mutants]]
-name = "M17 fillableAt: impossible-amount guard off by one"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'if (amount > capacity) {'
-replacement = 'if (amount >= capacity) {'
-
-[[mutants]]
-name = "M18 fillableAt: impossible-amount guard removed"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'if (amount > capacity) {'
-replacement = 'if (false) {'
-
-[[mutants]]
-name = "M19 fillableAt: already-fits test off by one"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'if (amount <= LibSaturatingMath.saturatingSub(capacity, levelNow)) {'
-replacement = 'if (amount < LibSaturatingMath.saturatingSub(capacity, levelNow)) {'
-
-[[mutants]]
-name = "M20 fillableAt: already-fits returns epoch not now"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'return timestamp;'
-replacement = 'return 0;'
-
-[[mutants]]
-name = "M21 fillableAt: target ignores the amount"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'target = capacity - amount;'
-replacement = 'target = capacity;'
-
-[[mutants]]
-name = "M22 fillableAt: zero-rate never-guard inverted"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'if (leakRate == 0) {'
-replacement = 'if (leakRate != 0) {'
-
-[[mutants]]
-name = "M23 fillableAt: wait floors instead of ceils"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'wait = (deficit - 1) / leakRate + 1;'
-replacement = 'wait = deficit / leakRate;'
-
-[[mutants]]
-name = "M24 fillableAt: wait loses its ceiling increment"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'wait = (deficit - 1) / leakRate + 1;'
-replacement = 'wait = (deficit - 1) / leakRate;'
-
-[[mutants]]
-name = "M25 fillableAt: waits from the clock, ignoring a later checkpoint"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'uint256 from = timestamp > checkpoint ? timestamp : checkpoint;'
-replacement = 'uint256 from = timestamp;'
-
-[[mutants]]
-name = "M26 fillableAt: waits from the checkpoint, ignoring a later clock"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'uint256 from = timestamp > checkpoint ? timestamp : checkpoint;'
-replacement = 'uint256 from = checkpoint;'
-
-[[mutants]]
-name = "M27 fillableAt: the wait is dropped"
-file = "src/lib/LibLeakyBucket.sol"
-target = 'return LibSaturatingMath.saturatingAdd(from, wait);'
-replacement = 'return from;'
-
-# ---------------- LibLeakyBucketCheckpoint.pack ----------------
-[[mutants]]
-name = "M28 pack: level overflow guard off by one"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'if (level > LEAKY_BUCKET_LEVEL_MAX) {'
-replacement = 'if (level >= LEAKY_BUCKET_LEVEL_MAX) {'
-
-[[mutants]]
-name = "M29 pack: level truncates instead of reverting"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'if (level > LEAKY_BUCKET_LEVEL_MAX) {'
-replacement = 'if (false) {'
-
-[[mutants]]
-name = "M30 pack: timestamp overflow guard off by one"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'if (timestamp > LEAKY_BUCKET_TIMESTAMP_MAX) {'
-replacement = 'if (timestamp >= LEAKY_BUCKET_TIMESTAMP_MAX) {'
-
-[[mutants]]
-name = "M31 pack: timestamp truncates instead of reverting"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'if (timestamp > LEAKY_BUCKET_TIMESTAMP_MAX) {'
-replacement = 'if (false) {'
-
-[[mutants]]
-name = "M32 pack: timestamp field dropped"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'
-replacement = 'return (level << LEAKY_BUCKET_TIMESTAMP_BITS);'
-
-[[mutants]]
-name = "M33 pack: fields swapped"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'
-replacement = 'return (timestamp << LEAKY_BUCKET_TIMESTAMP_BITS) | level;'
-
-[[mutants]]
-name = "M34 pack: shift off by one"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'
-replacement = 'return (level << (LEAKY_BUCKET_TIMESTAMP_BITS - 1)) | timestamp;'
-
-# ---------------- LibLeakyBucketCheckpoint.unpack ----------------
-[[mutants]]
-name = "M35 unpack: level shift off by one"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'level = checkpoint >> LEAKY_BUCKET_TIMESTAMP_BITS;'
-replacement = 'level = checkpoint >> (LEAKY_BUCKET_TIMESTAMP_BITS + 1);'
-
-[[mutants]]
-name = "M36 unpack: level is the whole word"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'level = checkpoint >> LEAKY_BUCKET_TIMESTAMP_BITS;'
-replacement = 'level = checkpoint;'
-
-[[mutants]]
-name = "M37 unpack: timestamp masked with the wrong width"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'timestamp = checkpoint & LEAKY_BUCKET_TIMESTAMP_MAX;'
-replacement = 'timestamp = checkpoint & LEAKY_BUCKET_LEVEL_MAX;'
-
-[[mutants]]
-name = "M38 unpack: timestamp unmasked"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'timestamp = checkpoint & LEAKY_BUCKET_TIMESTAMP_MAX;'
-replacement = 'timestamp = checkpoint;'
-
-# ---------------- LibLeakyBucketCheckpoint delegations ----------------
-[[mutants]]
-name = "M39 checkpoint levelAt: reads the clock as its own checkpoint"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'return LibLeakyBucket.levelAt(level, checkpointTimestamp, timestamp, leakRate);'
-replacement = 'return LibLeakyBucket.levelAt(level, timestamp, timestamp, leakRate);'
-
-[[mutants]]
-name = "M40 checkpoint headroomAt: reads the clock as its own checkpoint"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'return LibLeakyBucket.headroomAt(level, checkpointTimestamp, timestamp, capacity, leakRate);'
-replacement = 'return LibLeakyBucket.headroomAt(level, timestamp, timestamp, capacity, leakRate);'
-
-[[mutants]]
-name = "M41 checkpoint fillableAt: reads the clock as its own checkpoint"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'return LibLeakyBucket.fillableAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount);'
-replacement = 'return LibLeakyBucket.fillableAt(level, timestamp, timestamp, capacity, leakRate, amount);'
-
-[[mutants]]
-name = "M42 checkpoint fill: stores the OLD checkpoint, double crediting the leak"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = '''
-        return pack(
-            LibLeakyBucket.fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),
-            timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp
-        );'''
-replacement = '''
-        return pack(
-            LibLeakyBucket.fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),
-            checkpointTimestamp
-        );'''
-
-[[mutants]]
-name = "M43 checkpoint fill: the fill is dropped, only the clock advances"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = '''
-        return pack(
-            LibLeakyBucket.fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),
-            timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp
-        );'''
-replacement = '''
-        return pack(level, timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp);'''
-
-# ---------------- round 2: error identities and width constants ----------------
-[[mutants]]
-name = "M44 pack: level guard raises the timestamp error"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'revert LeakyBucketLevelOverflow(level);'
-replacement = 'revert LeakyBucketTimestampOverflow(level);'
-
-[[mutants]]
-name = "M45 pack: timestamp guard raises the level error"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'revert LeakyBucketTimestampOverflow(timestamp);'
-replacement = 'revert LeakyBucketLevelOverflow(timestamp);'
-
-[[mutants]]
-name = "M46 fillAt: revert argument order scrambled"
+name = "M18 fillAt: revert argument order scrambled"
 file = "src/lib/LibLeakyBucket.sol"
 target = 'revert LeakyBucketCapacityExceeded(capacity, levelNow, amount);'
 replacement = 'revert LeakyBucketCapacityExceeded(amount, levelNow, capacity);'
 
 [[mutants]]
-name = "M47 layout: timestamp field narrowed to 32 bits"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'uint256 constant LEAKY_BUCKET_TIMESTAMP_BITS = 64;'
-replacement = 'uint256 constant LEAKY_BUCKET_TIMESTAMP_BITS = 32;'
+name = "M19 fillAt: fill dropped, level unchanged"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return levelNow + amount;'
+replacement = 'return levelNow;'
 
 [[mutants]]
-name = "M48 layout: level max widened past the field"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'uint256 constant LEAKY_BUCKET_LEVEL_MAX = type(uint192).max;'
-replacement = 'uint256 constant LEAKY_BUCKET_LEVEL_MAX = type(uint208).max;'
+name = "M20 fillAt: existing level discarded"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return levelNow + amount;'
+replacement = 'return amount;'
 
+# ---------------- LibLeakyBucket.checkCapacity ----------------
 [[mutants]]
-name = "M49 layout: timestamp max narrowed"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'uint256 constant LEAKY_BUCKET_TIMESTAMP_MAX = type(uint64).max;'
-replacement = 'uint256 constant LEAKY_BUCKET_TIMESTAMP_MAX = type(uint32).max;'
-
-# ---------------- round 3: the audit fixes for #1 and #2 ----------------
-# The checkpoint may not go backwards (#1), and the packed API refuses a
-# capacity it cannot enforce (#2).
-
-[[mutants]]
-name = "M50 checkpoint fill: stores the raw clock, so a stale one regresses the checkpoint"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = '''
-        return pack(
-            LibLeakyBucket.fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),
-            timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp
-        );'''
-replacement = '''
-        return pack(
-            LibLeakyBucket.fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),
-            timestamp
-        );'''
-
-[[mutants]]
-name = "M51 checkpoint fill: stores the EARLIER of the clock and the checkpoint"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp'
-replacement = 'timestamp < checkpointTimestamp ? timestamp : checkpointTimestamp'
-
-[[mutants]]
-name = "M52 checkCapacity: guard off by one, rejects the widest storable capacity"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
+name = "M21 checkCapacity: guard off by one, rejects the widest storable capacity"
+file = "src/lib/LibLeakyBucket.sol"
 target = 'if (capacity > LEAKY_BUCKET_LEVEL_MAX) {'
 replacement = 'if (capacity >= LEAKY_BUCKET_LEVEL_MAX) {'
 
 [[mutants]]
-name = "M53 checkCapacity: never rejects"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
+name = "M22 checkCapacity: never rejects"
+file = "src/lib/LibLeakyBucket.sol"
 target = 'if (capacity > LEAKY_BUCKET_LEVEL_MAX) {'
 replacement = 'if (false) {'
 
 [[mutants]]
-name = "M54 checkCapacity: guard inverted"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
+name = "M23 checkCapacity: guard inverted"
+file = "src/lib/LibLeakyBucket.sol"
 target = 'if (capacity > LEAKY_BUCKET_LEVEL_MAX) {'
 replacement = 'if (capacity < LEAKY_BUCKET_LEVEL_MAX) {'
 
 [[mutants]]
-name = "M55 checkCapacity: error names the width rather than the capacity"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'revert LeakyBucketCapacityOverflow(capacity);'
-replacement = 'revert LeakyBucketCapacityOverflow(LEAKY_BUCKET_LEVEL_MAX);'
+name = "M24 checkCapacity: error names the width rather than the capacity"
+file = "src/lib/LibLeakyBucket.sol"
+# The bare `revert` line also appears in the governance snippet in
+# `LEAKY_BUCKET_LEVEL_MAX`'s NatSpec, so the guard around it is what makes this
+# target the code and not the comment.
+target = '''
+        if (capacity > LEAKY_BUCKET_LEVEL_MAX) {
+            revert LeakyBucketCapacityOverflow(capacity);
+        }'''
+replacement = '''
+        if (capacity > LEAKY_BUCKET_LEVEL_MAX) {
+            revert LeakyBucketCapacityOverflow(LEAKY_BUCKET_LEVEL_MAX);
+        }'''
 
 [[mutants]]
-name = "M56 checkCapacity: raises the level error, hiding which parameter is wrong"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = 'revert LeakyBucketCapacityOverflow(capacity);'
-replacement = 'revert LeakyBucketLevelOverflow(capacity);'
+name = "M25 checkCapacity: raises the timestamp error, hiding which parameter is wrong"
+file = "src/lib/LibLeakyBucket.sol"
+target = '''
+        if (capacity > LEAKY_BUCKET_LEVEL_MAX) {
+            revert LeakyBucketCapacityOverflow(capacity);
+        }'''
+replacement = '''
+        if (capacity > LEAKY_BUCKET_LEVEL_MAX) {
+            revert LeakyBucketTimestampOverflow(capacity);
+        }'''
+
+# ---------------- LibLeakyBucket.checkTimestamp ----------------
+[[mutants]]
+name = "M26 checkTimestamp: guard off by one, rejects the last recordable second"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'if (timestamp > LEAKY_BUCKET_TIMESTAMP_MAX) {'
+replacement = 'if (timestamp >= LEAKY_BUCKET_TIMESTAMP_MAX) {'
 
 [[mutants]]
-name = "M57 checkpoint headroomAt: capacity guard dropped"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
+name = "M27 checkTimestamp: never rejects, so pack truncates the second"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'if (timestamp > LEAKY_BUCKET_TIMESTAMP_MAX) {'
+replacement = 'if (false) {'
+
+[[mutants]]
+name = "M28 checkTimestamp: error names the width rather than the second"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'revert LeakyBucketTimestampOverflow(timestamp);'
+replacement = 'revert LeakyBucketTimestampOverflow(LEAKY_BUCKET_TIMESTAMP_MAX);'
+
+[[mutants]]
+name = "M29 checkTimestamp: raises the capacity error, sending the debugger to the policy"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'revert LeakyBucketTimestampOverflow(timestamp);'
+replacement = 'revert LeakyBucketCapacityOverflow(timestamp);'
+
+# ---------------- LibLeakyBucket.checkFillableDomain ----------------
+# The rule held in one place: a read answers exactly where `fill` acts. Each
+# half dropped, and the order they are checked in, which decides which
+# parameter a call that is wrong in both ways is told about.
+[[mutants]]
+name = "M30 checkFillableDomain: capacity half dropped"
+file = "src/lib/LibLeakyBucket.sol"
 target = '''
         checkCapacity(capacity);
+        checkTimestamp(timestamp);'''
+replacement = '''
+        checkTimestamp(timestamp);'''
+
+[[mutants]]
+name = "M31 checkFillableDomain: timestamp half dropped"
+file = "src/lib/LibLeakyBucket.sol"
+target = '''
+        checkCapacity(capacity);
+        checkTimestamp(timestamp);'''
+replacement = '''
+        checkCapacity(capacity);'''
+
+[[mutants]]
+name = "M32 checkFillableDomain: order swapped, so a doubly wrong call names the clock"
+file = "src/lib/LibLeakyBucket.sol"
+target = '''
+        checkCapacity(capacity);
+        checkTimestamp(timestamp);'''
+replacement = '''
+        checkTimestamp(timestamp);
+        checkCapacity(capacity);'''
+
+# ---------------- LibLeakyBucket.pack ----------------
+[[mutants]]
+name = "M33 pack: timestamp field dropped"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'
+replacement = 'return (level << LEAKY_BUCKET_TIMESTAMP_BITS);'
+
+[[mutants]]
+name = "M34 pack: fields swapped"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'
+replacement = 'return (timestamp << LEAKY_BUCKET_TIMESTAMP_BITS) | level;'
+
+[[mutants]]
+name = "M35 pack: shift off by one"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'
+replacement = 'return (level << (LEAKY_BUCKET_TIMESTAMP_BITS - 1)) | timestamp;'
+
+# ---------------- LibLeakyBucket.unpack ----------------
+[[mutants]]
+name = "M36 unpack: level shift off by one"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'level = checkpoint >> LEAKY_BUCKET_TIMESTAMP_BITS;'
+replacement = 'level = checkpoint >> (LEAKY_BUCKET_TIMESTAMP_BITS + 1);'
+
+[[mutants]]
+name = "M37 unpack: level is the whole word"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'level = checkpoint >> LEAKY_BUCKET_TIMESTAMP_BITS;'
+replacement = 'level = checkpoint;'
+
+[[mutants]]
+name = "M38 unpack: timestamp masked with the wrong width"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'timestamp = checkpoint & LEAKY_BUCKET_TIMESTAMP_MAX;'
+replacement = 'timestamp = checkpoint & LEAKY_BUCKET_LEVEL_MAX;'
+
+[[mutants]]
+name = "M39 unpack: timestamp unmasked"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'timestamp = checkpoint & LEAKY_BUCKET_TIMESTAMP_MAX;'
+replacement = 'timestamp = checkpoint;'
+
+# ---------------- LibLeakyBucket.headroomAt ----------------
+[[mutants]]
+name = "M40 headroomAt: domain guard dropped, so it answers where fill refuses"
+file = "src/lib/LibLeakyBucket.sol"
+target = '''
+        checkFillableDomain(capacity, timestamp);
         (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return LibLeakyBucket.headroomAt(level, checkpointTimestamp, timestamp, capacity, leakRate);'''
+        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));'''
 replacement = '''
         (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return LibLeakyBucket.headroomAt(level, checkpointTimestamp, timestamp, capacity, leakRate);'''
+        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));'''
 
 [[mutants]]
-name = "M58 checkpoint fillableAt: capacity guard dropped"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
-target = '''
-        checkCapacity(capacity);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return LibLeakyBucket.fillableAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount);'''
-replacement = '''
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return LibLeakyBucket.fillableAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount);'''
+name = "M41 headroomAt: reads the clock as its own checkpoint"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));'
+replacement = 'return headroomFrom(capacity, levelAt(level, timestamp, timestamp, leakRate));'
 
 [[mutants]]
-name = "M59 checkpoint fill: capacity guard dropped"
-file = "src/lib/LibLeakyBucketCheckpoint.sol"
+name = "M42 headroomAt: capacity and level swapped into headroomFrom"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));'
+replacement = 'return headroomFrom(levelAt(level, checkpointTimestamp, timestamp, leakRate), capacity);'
+
+# ---------------- LibLeakyBucket.fill ----------------
+[[mutants]]
+name = "M43 fill: domain guard dropped, so it acts where headroomAt refuses"
+file = "src/lib/LibLeakyBucket.sol"
 target = '''
-        checkCapacity(capacity);
+        checkFillableDomain(capacity, timestamp);
         (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
         return pack('''
 replacement = '''
         (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
         return pack('''
+
+[[mutants]]
+name = "M44 fill: reads the clock as its own checkpoint, crediting no leak"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),'
+replacement = 'fillAt(level, timestamp, timestamp, capacity, leakRate, amount),'
+
+[[mutants]]
+name = "M45 fill: the fill is dropped, only the clock advances"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),'
+replacement = 'level,'
+
+[[mutants]]
+name = "M46 fill: stores the OLD checkpoint, double crediting the leak"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp'
+replacement = 'checkpointTimestamp'
+
+[[mutants]]
+name = "M47 fill: stores the raw clock, so a stale one regresses the checkpoint"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp'
+replacement = 'timestamp'
+
+[[mutants]]
+name = "M48 fill: stores the EARLIER of the clock and the checkpoint"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp'
+replacement = 'timestamp < checkpointTimestamp ? timestamp : checkpointTimestamp'
+
+# ---------------- the layout constants ----------------
+# All three are derived from one free parameter, so a mutant on the parameter
+# moves the whole layout coherently and a mutant on a derivation pulls one
+# field out of step with the other.
+[[mutants]]
+name = "M49 layout: timestamp field narrowed to 32 bits"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'uint256 private constant LEAKY_BUCKET_TIMESTAMP_BITS = 64;'
+replacement = 'uint256 private constant LEAKY_BUCKET_TIMESTAMP_BITS = 32;'
+
+[[mutants]]
+name = "M50 layout: timestamp mask one bit too wide, reaching a level bit"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'uint256 private constant LEAKY_BUCKET_TIMESTAMP_MAX = (uint256(1) << LEAKY_BUCKET_TIMESTAMP_BITS) - 1;'
+replacement = 'uint256 private constant LEAKY_BUCKET_TIMESTAMP_MAX = (uint256(1) << (LEAKY_BUCKET_TIMESTAMP_BITS + 1)) - 1;'
+
+[[mutants]]
+name = "M51 layout: timestamp max narrowed out of step with the field"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'uint256 private constant LEAKY_BUCKET_TIMESTAMP_MAX = (uint256(1) << LEAKY_BUCKET_TIMESTAMP_BITS) - 1;'
+replacement = 'uint256 private constant LEAKY_BUCKET_TIMESTAMP_MAX = type(uint32).max;'
+
+[[mutants]]
+name = "M52 layout: level max widened past the field, so pack truncates"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'uint256 internal constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> LEAKY_BUCKET_TIMESTAMP_BITS;'
+replacement = 'uint256 internal constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> (LEAKY_BUCKET_TIMESTAMP_BITS - 16);'
+
+[[mutants]]
+name = "M53 layout: level max narrowed, so a storable capacity is refused"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'uint256 internal constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> LEAKY_BUCKET_TIMESTAMP_BITS;'
+replacement = 'uint256 internal constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> (LEAKY_BUCKET_TIMESTAMP_BITS + 1);'
+
+# ---------------- pack's restored overflow guards ----------------
+
+[[mutants]]
+name = "M54 pack: level guard off by one, rejects the widest storable level"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'if (level > LEAKY_BUCKET_LEVEL_MAX) {'
+replacement = 'if (level >= LEAKY_BUCKET_LEVEL_MAX) {'
+
+[[mutants]]
+name = "M55 pack: level guard never fires, so a wide level truncates into the clock"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'if (level > LEAKY_BUCKET_LEVEL_MAX) {'
+replacement = 'if (level > type(uint256).max) {'
+
+[[mutants]]
+name = "M56 pack: level guard raises the capacity error, hiding which field is wrong"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'revert LeakyBucketLevelOverflow(level);'
+replacement = 'revert LeakyBucketCapacityOverflow(level);'
+
+[[mutants]]
+name = "M57 pack: the timestamp is packed unchecked"
+file = "src/lib/LibLeakyBucket.sol"
+target = '''
+        checkTimestamp(timestamp);
+        unchecked {
+            return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'''
+replacement = '''
+        unchecked {
+            return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'''
