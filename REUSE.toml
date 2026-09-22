@@ -14,6 +14,8 @@ path = [
   "REUSE.toml",
   "soldeer.lock",
   ".soldeerignore",
+  "mutants.toml",
+  ".mutation-test/**",
 ]
 SPDX-FileCopyrightText = "Copyright (c) 2020 Rain Open Source Software Ltd"
 SPDX-License-Identifier = "LicenseRef-DCL-1.0"
