@@ -53,6 +53,22 @@ These bounds are fuzzed over the unbounded input space in
 
 ## Usage
 
+Install it with soldeer. The published package is `src/`, this README and the
+licence files — no `foundry.toml` and no lock file — so nothing in it declares
+the one dependency `src/` has, and installing this package on its own leaves an
+unresolved import. Install both:
+
+```
+forge soldeer install rain-lib-leakybucket~x.y.z
+forge soldeer install rain-math-saturating~0.1.10
+```
+
+`0.1.10` there is exact, not a floor. `src/lib/LibLeakyBucket.sol` imports
+`rain-math-saturating-0.1.10/src/lib/LibSaturatingMath.sol` by that literal
+path, and soldeer keys the remapping it generates on the installed directory
+name, so any other revision of `rain-math-saturating` is remapped under a
+different prefix and the import does not resolve.
+
 The state is one `uint256` per bucket. A zero word is an empty bucket
 checkpointed at the epoch, so an untouched storage slot is already a valid
 starting state and no initializer is needed.
