@@ -275,6 +275,17 @@ library at the same time, as at September 2026:
 | [Chainlink CCIP `RateLimiter`](https://github.com/smartcontractkit/chainlink-ccip)                                                   | **BUSL-1.1**                                    | Yes                                                                        | Licence rules it out                                                                                  |
 | [Hyperlane `RateLimited`](https://github.com/hyperlane-xyz/hyperlane-monorepo/blob/main/solidity/contracts/libs/RateLimited.sol)     | MIT OR Apache-2.0                               | Partial                                                                    | An `OwnableUpgradeable` **contract** with governance built in, not a library                          |
 
+## Licence
+
+DecentraLicense 1.0 (`LicenseRef-DCL-1.0`). Full text in
+[`LICENSES/LicenseRef-DCL-1.0.txt`](LICENSES/LicenseRef-DCL-1.0.txt), which
+`LICENSE` is a symlink to. That is the same question the table above asks of
+every alternative, so it is answered here for this library too.
+
+The repo is [REUSE](https://reuse.software) compliant: every file carries an
+`SPDX-License-Identifier` or is annotated in `REUSE.toml`, and `reuse lint` runs
+in CI.
+
 ## Audit scope
 
 Not yet audited. The intended scope is `src/`, which is two files and no
