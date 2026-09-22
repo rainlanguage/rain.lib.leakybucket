@@ -25,8 +25,8 @@ contract LibLeakyBucketGasTest is Test {
     uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
     uint256 internal constant DRAIN = WORKED_DRAIN;
 
-    PackedBucket internal packed;
-    UnpackedBucket internal unpacked;
+    PackedBucket internal sPacked;
+    UnpackedBucket internal sUnpacked;
 
     /// `PackedBucket`'s only slot as `setUp` left it, for the rejected fill
     /// below to compare against. Taken here and not in the test body because
@@ -37,17 +37,17 @@ contract LibLeakyBucketGasTest is Test {
     bytes32 internal sPackedSlotAtSetUp;
 
     function setUp() external {
-        packed = new PackedBucket();
-        unpacked = new UnpackedBucket();
+        sPacked = new PackedBucket();
+        sUnpacked = new UnpackedBucket();
         vm.warp(1_700_000_000);
         // Prime both so the measured fills hit non zero slots, then move the
         // clock on by a sixth of a drain time, which is far more leak than the
         // unit primed above, so every measured fill below starts from an empty
         // bucket with a real leak to apply.
-        packed.fill(CAPACITY, LEAK_RATE, 1e18);
-        unpacked.fill(CAPACITY, LEAK_RATE, 1e18);
+        sPacked.fill(CAPACITY, LEAK_RATE, 1e18);
+        sUnpacked.fill(CAPACITY, LEAK_RATE, 1e18);
         vm.warp(block.timestamp + DRAIN / 6);
-        sPackedSlotAtSetUp = vm.load(address(packed), bytes32(uint256(0)));
+        sPackedSlotAtSetUp = vm.load(address(sPacked), bytes32(uint256(0)));
     }
 
     function measure(address target, uint256 amount) internal returns (uint256) {
@@ -72,7 +72,7 @@ contract LibLeakyBucketGasTest is Test {
     /// The steady state, and the number that matters: a minter that has minted
     /// before, in a later transaction.
     function testGasSteadyStateFill() external {
-        uint256 gas = measure(address(packed), 1e18);
+        uint256 gas = measure(address(sPacked), 1e18);
         console2.log("packed steady state fill", gas);
         assertGt(gas, 5_000);
         assertLt(gas, 12_000);
@@ -89,8 +89,8 @@ contract LibLeakyBucketGasTest is Test {
     /// layout pays. The `SSTORE` half is measured separately below, where the
     /// slots are genuinely untouched.
     function testGasPackedBeatsUnpackedOnTheExtraLoad() external {
-        uint256 packedGas = measure(address(packed), 1e18);
-        uint256 unpackedGas = measure(address(unpacked), 1e18);
+        uint256 packedGas = measure(address(sPacked), 1e18);
+        uint256 unpackedGas = measure(address(sUnpacked), 1e18);
         console2.log("packed steady state", packedGas);
         console2.log("unpacked steady state", unpackedGas);
         console2.log("saving (load only)", unpackedGas - packedGas);
@@ -144,7 +144,7 @@ contract LibLeakyBucketGasTest is Test {
         bytes memory call =
             abi.encodeWithSignature("fill(uint256,uint256,uint256)", CAPACITY, LEAK_RATE, type(uint256).max);
         uint256 before = gasleft();
-        (bool ok, bytes memory reason) = address(packed).call(call);
+        (bool ok, bytes memory reason) = address(sPacked).call(call);
         uint256 gas = before - gasleft();
 
         // Which revert, not just "reverted". `setUp` primed the bucket with
@@ -162,7 +162,7 @@ contract LibLeakyBucketGasTest is Test {
         // reverting, or a concrete that swallowed the revert after storing,
         // would sit inside the band. `sCheckpoint` is `PackedBucket`'s only
         // state variable, so it is slot 0.
-        assertEq(vm.load(address(packed), bytes32(uint256(0))), sPackedSlotAtSetUp);
+        assertEq(vm.load(address(sPacked), bytes32(uint256(0))), sPackedSlotAtSetUp);
 
         console2.log("packed rejected fill", gas);
         assertGt(gas, 6_000);
