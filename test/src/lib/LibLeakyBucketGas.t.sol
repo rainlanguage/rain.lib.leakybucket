@@ -8,22 +8,7 @@ import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
 import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
 
 /// Each band asserted here is a `gasleft()` delta in the regime the test name
-/// gives. A compiler or EVM change that moves a measurement out of its band
-/// fails here, and the documented band is corrected with it.
-///
-/// Every measurement is the *first* touch of the subject's storage within its
-/// test, because `forge` keeps slots warm for the whole of a test body and a
-/// second measurement in the same body would price warm slots at 100 gas and
-/// report a saving an order of magnitude too small. Every subject is
-/// constructed, and where it is primed, primed, in `setUp`, which is a
-/// separate call, so its slots are cold when the measurement starts, exactly
-/// as they are for a mint in a fresh transaction. That includes the two policy
-/// slots: a real deployment set them in an earlier transaction, so a fill pays
-/// a cold read for each, and constructing the subject inside a test body would
-/// leave them warm and under-report a fill by two cold `SLOAD`s.
-///
-/// A fill reads all three fields of the bucket from storage, and the caller
-/// stores the checkpoint back.
+/// gives.
 contract LibLeakyBucketGasTest is Test {
     /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`.
     uint256 internal constant CAPACITY = WORKED_CAPACITY;
@@ -38,11 +23,7 @@ contract LibLeakyBucketGasTest is Test {
     PackedBucket internal sFresh;
 
     /// `sPacked`'s checkpoint slot as `setUp` left it, for the rejected fill
-    /// below to compare against. Taken here and not in the test body because
-    /// reading the slot immediately before the measured call warms both the
-    /// account and the slot and measures a different regime entirely. `setUp`
-    /// is a separate call, the access list resets between it and a test body,
-    /// and the measurement is the cold one either way.
+    /// below to compare against.
     bytes32 internal sPackedSlotAtSetUp;
 
     function setUp() external {
@@ -68,7 +49,7 @@ contract LibLeakyBucketGasTest is Test {
     }
 
     /// The first fill a brand new minter ever makes, against a zero checkpoint
-    /// slot. This is the one time the 20k zero to non zero `SSTORE` is paid.
+    /// slot.
     function testGasFirstFillIntoEmptySlot() external {
         uint256 gas = measure(address(sFresh), 1e18);
         console2.log("packed first fill (zero slot)", gas);
@@ -85,10 +66,7 @@ contract LibLeakyBucketGasTest is Test {
         assertLt(gas, 16_000);
     }
 
-    /// A rejected fill costs the reads and the revert, and writes nothing. The
-    /// band belongs to a capacity rejection specifically, so the rejection is
-    /// identified before the gas is banded, and the "writes nothing" half is a
-    /// state claim rather than a gas claim so it is asserted as one.
+    /// A rejected fill costs the reads and the revert, and writes nothing.
     function testGasRejectedFill() external {
         bytes memory call = abi.encodeWithSignature("fill(uint256)", type(uint256).max);
         uint256 before = gasleft();

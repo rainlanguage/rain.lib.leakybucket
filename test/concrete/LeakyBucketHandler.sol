@@ -7,28 +7,8 @@ import {LeakyBucketMintCap} from "./LeakyBucketMintCap.sol";
 import {LeakyBucketCapacityExceeded} from "../../src/lib/LibLeakyBucket.sol";
 
 /// @title LeakyBucketHandler
-/// @notice The call generator behind `LeakyBucketInvariant.t.sol`. It composes
-/// mints, waits and policy changes in orders a fixed loop cannot produce — a
-/// capacity cut landing between two mints of different sizes, a wait of a
-/// single second between two that just fit, a policy change and a mint in the
-/// same instant — and records what the cap should have done at every step.
-///
-/// Every call's outcome is PREDICTED here rather than swallowed. `mint` is
-/// try/caught because rejection is a legitimate outcome, not because the
-/// outcome is uninteresting: the success branch asserts the mint fitted and
-/// landed exactly, and the failure branch asserts it did not fit and was
-/// refused for that reason specifically. A `catch` that asserted nothing would
-/// make the whole run vacuous — a cap that refused every call would leave
-/// `minted` at zero, and zero satisfies every invariant in the suite.
-///
-/// The handler therefore never reverts for any reason of its own. `bound`
-/// cannot revert, the capacity it hands `setPolicy` is never above the one it
-/// started with so `checkCapacity` cannot refuse it, and the only external
-/// call that can revert is caught. That is what makes `fail-on-revert = true`
-/// safe on the test, and `true` is what makes the assertions here count: with
-/// `false`, a failed `assertEq` — which is a revert, since forge-std delegates
-/// to `vm.assertEq` — would be discarded as "that call reverted, try another"
-/// and the run would go green.
+/// @notice Call generator for `LeakyBucketInvariant.t.sol`: mints, waits and
+/// policy changes in fuzzed order, recording what the cap should have done.
 contract LeakyBucketHandler is Test {
     /// The cap under test.
     LeakyBucketMintCap internal immutable CAP;
@@ -45,13 +25,11 @@ contract LeakyBucketHandler is Test {
     uint256 public immutable START;
 
     /// The capacity currently in force, mirrored so the invariant can read the
-    /// policy without a second source of truth. Public and so unprefixed, the
-    /// same as `LeakyBucketMintCap.totalMinted`.
+    /// policy without a second source of truth.
     uint256 public capacity;
 
     /// What this handler believes the minter has minted, accumulated from the
-    /// calls it made rather than read back from the cap. The invariant checks
-    /// the two agree.
+    /// calls it made rather than read back from the cap.
     uint256 public minted;
 
     // `minter` is the address whose bucket this handler drives, supplied by the
@@ -68,8 +46,8 @@ contract LeakyBucketHandler is Test {
         START = block.timestamp;
     }
 
-    /// A mint of an arbitrary size, at whatever point in the history the
-    /// fuzzer has built up to.
+    /// A mint of an arbitrary size, at whatever point in the history the fuzzer
+    /// has built up to.
     function mint(uint256 amount) external {
         amount = bound(amount, 0, capacity);
         uint256 headroomBefore = CAP.headroom(MINTER);
@@ -95,9 +73,7 @@ contract LeakyBucketHandler is Test {
     }
 
     /// Time passing between calls, which is the only thing that refills the
-    /// bucket. `uint32` is about 136 years per step, so a run reaches waits no
-    /// deployment will ever see while staying far inside the 64 bit timestamp
-    /// field the codec packs.
+    /// bucket.
     function wait(uint32 gap) external {
         vm.warp(block.timestamp + gap);
     }
@@ -105,15 +81,6 @@ contract LeakyBucketHandler is Test {
     /// Governance moving the burst around underneath an in-flight history,
     /// which is the case a fixed loop with a constant policy cannot reach at
     /// all.
-    ///
-    /// The capacity only ever shrinks. That is not timidity: it is what keeps
-    /// the throughput bound the invariant asserts a real bound. A capacity that
-    /// grew mid-run would let cumulative mints exceed "one starting burst plus
-    /// the leak over the window" legitimately, and the invariant would have to
-    /// be weakened to a bound that no longer says anything. Shrinking is also
-    /// the direction that is dangerous in practice — cutting a burst that is
-    /// already outstanding — so it is the direction worth composing against
-    /// mints and waits.
     function setCapacity(uint256 capacity_) external {
         capacity = bound(capacity_, 0, capacity);
         CAP.setPolicy(MINTER, capacity, LEAK_RATE);

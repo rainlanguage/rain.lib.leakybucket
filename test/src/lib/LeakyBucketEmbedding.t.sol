@@ -24,9 +24,7 @@ contract LeakyBucketEmbeddingTest is Test {
     /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`:
     /// a 3600 unit burst at one unit per second sustained, so a full bucket
     /// drains in exactly `DRAIN` seconds and every assertion below is exact
-    /// integer arithmetic. `DRAIN` is the quotient of the other two rather than
-    /// a restated literal, and the waits below are written over it so each one
-    /// says what fraction of a drain it is.
+    /// integer arithmetic.
     uint256 internal constant CAPACITY = WORKED_CAPACITY;
     uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
     uint256 internal constant DRAIN = WORKED_DRAIN;
@@ -44,8 +42,7 @@ contract LeakyBucketEmbeddingTest is Test {
         assertEq(sCap.headroom(ALICE), CAPACITY);
     }
 
-    /// A minter with no policy at all can mint nothing. Capacity zero is a
-    /// closed door, so forgetting to configure a minter fails closed.
+    /// A minter with no policy at all can mint nothing.
     function testUnconfiguredMinterCanMintNothing() external {
         address mallory = address(uint160(uint256(keccak256("mallory"))));
         assertEq(sCap.headroom(mallory), 0);
@@ -66,10 +63,7 @@ contract LeakyBucketEmbeddingTest is Test {
         sCap.mint(1);
     }
 
-    /// The state written back is the state read next block. This is the test
-    /// that would fail if the level were stored without its timestamp: the leak
-    /// from the original checkpoint would be credited again on every call and
-    /// the headroom would come back too high.
+    /// The state written back is the state read next block.
     function testLeakIsCreditedOnceNotPerCall() external {
         vm.prank(ALICE);
         sCap.mint(CAPACITY);
@@ -102,7 +96,7 @@ contract LeakyBucketEmbeddingTest is Test {
         assertEq(other.level(BOB), sCap.level(ALICE));
     }
 
-    /// Buckets are per minter. Alice exhausting hers leaves Bob untouched.
+    /// Buckets are per minter.
     function testBucketsAreIndependentPerMinter() external {
         vm.prank(ALICE);
         sCap.mint(CAPACITY);
@@ -183,13 +177,8 @@ contract LeakyBucketEmbeddingTest is Test {
         assertEq(sCap.headroom(ALICE), CAPACITY / 20);
     }
 
-    /// The second a given amount fits again is exactly the second the leak
-    /// pays for it, and not one second earlier.
-    ///
-    /// The library forecasts nothing — the arithmetic here is the caller's, as
-    /// `leakRate` is the caller's — so this is the test that the rate a policy
-    /// names is the rate a caller can plan against. Half a capacity, at one
-    /// unit a second, comes back in exactly half a drain time.
+    /// The second a given amount fits again is exactly the second the leak pays
+    /// for it, and not one second earlier.
     function testTheSecondAHalfCapacityFitsAgain() external {
         vm.prank(ALICE);
         sCap.mint(CAPACITY);
@@ -225,17 +214,7 @@ contract LeakyBucketEmbeddingTest is Test {
     }
 
     /// However a minter splits its calls, and however long it waits between
-    /// them, the burst available to it is never more than one capacity. The
-    /// fuzzer picks the split and the gaps; the assertions inside the loop are
-    /// the security property, checked at every point of an arbitrary history.
-    ///
-    /// Every call's outcome is PREDICTED from the headroom before it, rather
-    /// than swallowed. Multi-call state sequences are the one region a mutation
-    /// ledger over pure functions structurally cannot reach — a mutant is
-    /// killed or not by a single call's result — so this is where a spurious
-    /// rejection in the middle of a long history has to be caught. A loop that
-    /// caught every revert could not: a cap that refused everything leaves
-    /// `minted` at zero, and zero satisfies every assertion after the loop.
+    /// them, the burst available to it is never more than one capacity.
     function testNoMintExceedsCapacityUnderArbitrarySplits(uint8 mints, uint16[16] memory gaps, uint256 amount)
         external
     {
@@ -278,14 +257,6 @@ contract LeakyBucketEmbeddingTest is Test {
     }
 
     /// A clock that steps backwards banks no credit, through real storage.
-    ///
-    /// `block.timestamp` is monotonic within a chain, so this is not reachable
-    /// from the embedding above; it is reachable the moment a concrete feeds
-    /// the library a time from anywhere else, which the API permits and this
-    /// library is chain agnostic enough to have to survive. The mint at the
-    /// stale second is a checkpoint and nothing else, and the bucket must read
-    /// at every later second exactly as it would have if that call had never
-    /// happened.
     function testBackwardsClockBanksNoCredit() external {
         vm.prank(ALICE);
         sCap.mint(CAPACITY);

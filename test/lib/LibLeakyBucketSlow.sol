@@ -3,17 +3,11 @@
 pragma solidity ^0.8.25;
 
 /// @title LibLeakyBucketSlow
-/// @notice The leak, written the way the bucket is described rather than the
-/// way it is computed: one second at a time, subtracting `leakRate` and
-/// stopping at empty. It is `O(elapsed)` and would never ship, which is the
-/// point. `LibLeakyBucket.leak` collapses the same loop into one multiply, and
-/// the differential test asserts the two agree over every input where the loop
-/// is affordable to run.
+/// @notice The leak one second at a time, as an oracle for the closed form.
 library LibLeakyBucketSlow {
     /// Leak `elapsed` times, one second per iteration.
     /// @param level The level at the start of the interval.
     /// @param elapsed The length of the interval in seconds. Keep it small;
-    /// this is a loop.
     /// @param leakRate The leak in units per second.
     /// @return The level at the end of the interval.
     function leakSlow(uint256 level, uint256 elapsed, uint256 leakRate) internal pure returns (uint256) {

@@ -10,50 +10,23 @@ import {LibCheckpointWord} from "../../lib/LibCheckpointWord.sol";
 import {LeakyBucketScratch} from "../../abstract/LeakyBucketScratch.sol";
 
 /// What `capacity` does and does not bound.
-///
-/// These are separated from the rest of the suite because the distinction is
-/// the one a reader is most likely to get wrong, in either direction. The
-/// bucket is hard bounded by `capacity` at every instant: the level cannot pass
-/// it, headroom cannot exceed it no matter how long the bucket idles, and a
-/// single fill can never be larger than it. What is NOT bounded by `capacity`
-/// is cumulative throughput over time, because a leak that did not let more
-/// through over time would not be a leak. Both halves are asserted here so
-/// neither can be changed silently.
-///
-/// Every assertion goes through `fill` and `headroomAt`, which are the whole of
-/// the library's surface. The level a bucket is carrying is read with
-/// `LeakyBucketScratch.levelAt`, which derives it from `headroomAt` against the
-/// widest enforceable capacity rather than from a library function of its own —
-/// see that contract for why the derivation is exact.
-///
-/// The fuzzed parameters are typed to the packed fields: a `capacity` wider
-/// than the level field and a `timestamp` wider than the timestamp field are
-/// refused outright by both entry points, and that refusal is a separate claim
-/// pinned in `LibLeakyBucket.t.sol`. Everything here is about what the cap does
-/// on the domain where it answers at all.
 contract CapacityBoundTest is Test, LeakyBucketScratch {
     /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`:
     /// a 3600 unit burst draining at one unit per second, so a full bucket
-    /// empties in exactly an hour. `DRAIN` is the quotient of the other two
-    /// rather than a restated literal, so it cannot come to mean anything but
-    /// "one full drain".
+    /// empties in exactly an hour.
     uint256 internal constant CAPACITY = WORKED_CAPACITY;
     uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
     uint256 internal constant DRAIN = WORKED_DRAIN;
 
     /// Idling accrues NO credit beyond the capacity: however long a bucket sits
     /// untouched, the most it can ever offer is one full capacity, and there is
-    /// no input that lets waiting bank more than that. This is the worked-policy
-    /// form of it, at a wait long enough that a design which banked credit would
-    /// be obvious — a thousand drain times of idling still offers exactly one
-    /// capacity, not a thousand. The general form, over arbitrary inputs, is
-    /// `testHeadroomNeverExceedsCapacity` in `LibLeakyBucket.t.sol`.
+    /// no input that lets waiting bank more than that.
     function testIdleForAThousandDrainTimesStillOffersOneCapacity() external pure {
         assertEq(headroomAt(0, DRAIN * 1000, CAPACITY, LEAK_RATE), CAPACITY);
     }
 
     /// Filling an empty bucket to the top leaves nothing further to mint, at
-    /// that instant. "Zero to full" is "zero headroom".
+    /// that instant.
     function testFillingToCapacityLeavesZeroHeadroom(uint192 capacity, uint256 leakRate, uint64 timestamp)
         external
         pure
@@ -100,10 +73,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
 
     /// The deliberate other half, pinned so it cannot drift: cumulative
     /// throughput DOES grow past the capacity as time passes, at exactly the
-    /// leak rate. Minting a full bucket and then waiting half a drain time
-    /// makes half a capacity available again. This is the rate limit working,
-    /// not the cap leaking: at no instant did the bucket hold more than
-    /// `capacity`, and no single mint was larger than `capacity`.
+    /// leak rate.
     function testRefillIsPacedByLeakRateAndCappedAtCapacity() external pure {
         uint256 filled = fill(0, 0, CAPACITY, LEAK_RATE, CAPACITY);
         assertEq(LibCheckpointWord.storedLevel(filled), CAPACITY);
@@ -120,8 +90,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
     }
 
     /// A burst that follows a full drain is capped exactly as the first one
-    /// was. Draining restores the ability to burst again, it never enlarges
-    /// the burst, and the unit past the cap is still rejected.
+    /// was.
     function testASecondBurstAfterAFullDrainIsCappedTheSame() external {
         uint256 filled = fill(0, 0, CAPACITY, LEAK_RATE, CAPACITY);
         uint256 refilled = fill(filled, DRAIN, CAPACITY, LEAK_RATE, CAPACITY);
@@ -131,11 +100,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
         this.externalFill(refilled, DRAIN, CAPACITY, LEAK_RATE, 1);
     }
 
-    /// You cannot leak more than the bucket before a mint. The leak credited is
-    /// `min(level, elapsed * leakRate)`: it is bounded by the level, which is
-    /// bounded by the capacity, and the level stops at zero rather than going
-    /// negative. However long the wait, it cannot manufacture more drain than
-    /// there was level to drain.
+    /// You cannot leak more than the bucket before a mint.
     function testLeakCreditedNeverExceedsTheBucket(
         uint192 level,
         uint64 checkpoint,
@@ -172,9 +137,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
     }
 
     /// Consuming the bucket zeroes it immediately, in the same second, not
-    /// after some delay and not partially. Whatever happens afterwards is the
-    /// refill, and no length of wait offers the next mint more than one
-    /// capacity.
+    /// after some delay and not partially.
     function testConsumedBucketIsZeroImmediatelyThenRefillsBoundedByCapacity(uint64 elapsed) external pure {
         uint256 filled = fill(0, 0, CAPACITY, LEAK_RATE, CAPACITY);
 

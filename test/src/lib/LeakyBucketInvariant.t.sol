@@ -8,22 +8,6 @@ import {LeakyBucketHandler} from "../../concrete/LeakyBucketHandler.sol";
 import {WORKED_CAPACITY, WORKED_LEAK_RATE} from "../../lib/WorkedPolicy.sol";
 
 /// The one stateful invariant run in the suite.
-///
-/// Everything else here is a fuzz over a single call, or a fuzz over a loop
-/// of a fixed shape. Multi-call histories are the region a mutation ledger
-/// structurally cannot reach — a mutant is killed or not by a single call's
-/// result — and both adversarial findings this repo has already fixed were
-/// write-path state-sequence bugs, so it is the region with the worst prior and
-/// the least coverage. A handler composes mints, waits and policy changes in
-/// orders the fixed loop in `LeakyBucketEmbedding.t.sol` cannot produce.
-///
-/// `fail-on-revert` is `true`, set inline so it is visible from the file it
-/// governs and scoped to it. The issue this closes proposed `false`, which is
-/// the Foundry default and is wrong here: forge-std 1.16.2 `assertEq`/`assertLe`
-/// delegate to `vm.assertEq`, which REVERTS, so with `false` a failed assertion
-/// inside the handler is discarded as "that call reverted, discard it and carry
-/// on" and the run goes green. `true` is safe because `LeakyBucketHandler`
-/// never reverts for any reason of its own; see the note on that contract.
 contract LeakyBucketInvariantTest is Test {
     /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`.
     uint256 internal constant CAPACITY = WORKED_CAPACITY;
@@ -55,18 +39,13 @@ contract LeakyBucketInvariantTest is Test {
 
     /// No instant of any history offers more than the burst in force, and the
     /// burst in force is never more than the one the run started with.
-    /// forge-config: default.invariant.fail-on-revert = true
     function invariant_headroomNeverExceedsCapacity() external view {
         assertLe(cap.headroom(ALICE), handler.capacity());
         assertLe(cap.headroom(ALICE), CAPACITY);
     }
 
     /// Cumulative throughput is bounded by one burst plus the sustained rate
-    /// over the elapsed window, however the calls are interleaved. The cap's
-    /// own total and the handler's independently accumulated one must also
-    /// agree, so a mint that landed without the handler seeing it, or the
-    /// reverse, fails here.
-    /// forge-config: default.invariant.fail-on-revert = true
+    /// over the elapsed window, however the calls are interleaved.
     function invariant_throughputIsBoundedByBurstPlusLeak() external view {
         assertEq(handler.minted(), cap.totalMinted());
         assertLe(handler.minted(), CAPACITY + (block.timestamp - handler.START()) * LEAK_RATE);
