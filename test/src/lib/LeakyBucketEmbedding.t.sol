@@ -7,6 +7,7 @@ import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
 import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
 import {LeakyBucketCapacityOverflow, LEAKY_BUCKET_LEVEL_MAX} from "../../../src/lib/LibLeakyBucketCheckpoint.sol";
 import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
+import {UnpackedBucket} from "../../concrete/UnpackedBucket.sol";
 
 /// The library under a real storage layout and a real clock, which is where the
 /// mistakes that pure function tests cannot see would show up: state written
@@ -279,5 +280,38 @@ contract LeakyBucketEmbeddingTest is Test {
         // The widest capacity the codec can store is settable and binds.
         cap.setPolicy(BOB, LEAKY_BUCKET_LEVEL_MAX, LEAK_RATE);
         assertEq(cap.headroom(BOB), LEAKY_BUCKET_LEVEL_MAX);
+    }
+
+    /// The same backwards-clock property as `testBackwardsClockBanksNoCredit`,
+    /// but for state held OUTSIDE the codec.
+    ///
+    /// `LibLeakyBucket` cannot enforce this: it is pure and owns no slot, so
+    /// the obligation falls on whoever keeps the checkpoint. The README states
+    /// it in prose and `levelAt`'s NatSpec states it again, and `UnpackedBucket`
+    /// is the only place in the repo where a reader can see the unpacked
+    /// embedding written out — which makes it the artifact that gets copied.
+    /// Enforcing it here means the example cannot quietly regress to the
+    /// unguarded three-line `fill` that reintroduces the bug.
+    function testUnpackedEmbeddingKeepsItsCheckpointMonotonic() external {
+        UnpackedBucket bucket = new UnpackedBucket();
+        bucket.fill(CAPACITY, LEAK_RATE, CAPACITY);
+        assertEq(bucket.headroom(CAPACITY, LEAK_RATE), 0);
+
+        uint256 filled = block.timestamp;
+
+        // The clock falls back a whole drain time and the bucket is touched
+        // with a zero fill, which is a checkpoint and nothing else.
+        vm.warp(filled - DRAIN);
+        bucket.fill(CAPACITY, LEAK_RATE, 0);
+
+        // Back at the second of the original fill it is still full. Without the
+        // comparison in `fill` the stored checkpoint would have gone back with
+        // the clock and this would read as a whole capacity of headroom.
+        vm.warp(filled);
+        assertEq(bucket.headroom(CAPACITY, LEAK_RATE), 0);
+
+        // And one real drain time later it is one capacity, not two.
+        vm.warp(filled + DRAIN);
+        assertEq(bucket.headroom(CAPACITY, LEAK_RATE), CAPACITY);
     }
 }
