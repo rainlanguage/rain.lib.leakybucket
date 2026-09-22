@@ -31,14 +31,16 @@ is `min(level, elapsed * leakRate)` — bounded by the level, which is bounded b
 banks no credit. Idle for an hour or for a decade and the answer is the same:
 one `capacity`, never more.
 
-**Immediately after a mint consumes the bucket, it is zero.** At that same
-second, not at the next block and not partially. What was available has been
-spent, and nothing is available again until time passes.
+**Immediately after a mint consumes the burst, the headroom is zero.** At that
+same second, not at the next block and not partially. What was available has
+been spent, and nothing is available again until time passes. The mint raised
+the level; what it emptied is the headroom.
 
-**Then it refills by leaking, up to `capacity` and no further.** The refill is
-what `leakRate` sets the pace of, and it is bounded by `capacity` as well: the
-bucket cannot refill past full, so the next burst is capped at `capacity`
-exactly as the first one was.
+**Then the headroom returns by leaking, up to `capacity` and no further.** The
+leak is what `leakRate` sets the pace of. What bounds the headroom it returns is
+the floor under the level rather than a ceiling over it: the level saturates at
+zero instead of going negative, and headroom is `capacity` less the level, so
+the next burst is capped at `capacity` exactly as the first one was.
 
 That asymmetry is the security property in one line: **no burst, at any point in
 the bucket's history, can exceed `capacity`.** What `leakRate` controls is how
