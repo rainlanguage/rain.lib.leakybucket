@@ -224,7 +224,8 @@ visible. Round down, so the on chain rate is never faster than the policy.
 Every operation that could leave the representable range is a saturating one
 from
 [`rain.math.saturating`](https://github.com/rainlanguage/rain.math.saturating)
-(audited by Protofire, January 2026, same licence as this library).
+([audited by Protofire, January 2026](https://github.com/rainlanguage/rain.math.saturating/blob/sol-v0.1.10/audit/protofire/rain.math.saturating.22e58d70a223b18d83dfc5529e3ac87aef3ff478.jan-2026.pdf),
+covering commit `22e58d7`; same licence as this library).
 
 No overflow guard is hand rolled around those operations. What is hand written
 is `unchecked`, in five places: the sum in `fillAt`, the `capacity - amount` and
@@ -341,9 +342,12 @@ in CI.
 ## Audit scope
 
 Not yet audited. The intended scope is `src/`, which is two files and no
-dependencies beyond `LibSaturatingMath`, itself already audited. The properties
-an audit should hold the implementation to are the ones fuzzed in
-`test/src/lib/`:
+dependencies beyond `LibSaturatingMath`. That one is already audited, and the
+reviewed artefact is the one this library compiles: Protofire reviewed
+`rain.math.saturating` at commit `22e58d7` in January 2026, and
+`src/lib/LibSaturatingMath.sol` is unchanged apart from comments between that
+commit and the `0.1.10` the imports pin. The properties an audit should hold the
+implementation to are the ones fuzzed in `test/src/lib/`:
 
 - No burst can exceed `capacity`, at any point in a bucket history. `capacity`
   bounds the level, the headroom and any single fill at every instant, elapsed
