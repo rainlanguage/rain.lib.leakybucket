@@ -248,7 +248,34 @@ contract LibLeakyBucketTest is Test {
     }
 
     /// `fillableAt` names the earliest second the amount fits: it fits then,
-    /// and it did not fit a second earlier.
+    /// and it did not fit a second earlier. Where it names never, never is
+    /// true.
+    ///
+    /// The sentinel used to be returned from unasserted, which made the one
+    /// general test of this function blind to exactly the value in question.
+    /// A `fillableAt` that answered never too readily satisfied every
+    /// assertion in the suite, because the test walked away the moment the
+    /// answer was `type(uint256).max`.
+    ///
+    /// The sentinel is in band, so `type(uint256).max` coming back is not on
+    /// its own a claim of never. It is also the honest answer "now" for a
+    /// caller whose own clock is the last second the word can name, since a
+    /// fit at `timestamp` returns `timestamp`. That collision is separated
+    /// here rather than assumed away: where the amount fits at `timestamp`
+    /// the answer is now and the clock has to be the top of the word, and
+    /// only where it does not fit is never asserted.
+    ///
+    /// Never is then checked one second below the top of the word rather than
+    /// at it, because an arrival of exactly `type(uint256).max` is
+    /// representable: the saturating add returns the sentinel both for a wait
+    /// landing exactly on the last second and for one landing past the end of
+    /// it, so asserting the amount does not fit at `type(uint256).max` would
+    /// be asserting a defect. At `type(uint256).max - 1` there is no
+    /// ambiguity, whichever route produced the sentinel. An amount larger
+    /// than the capacity fits nowhere. A zero rate holds the headroom fixed
+    /// forever, so a non fitting amount never fits. A saturated arrival is at
+    /// the earliest `type(uint256).max` itself, which is later than the
+    /// second being asked about.
     function testFillableAtIsTheEarliestFittingSecond(
         uint256 level,
         uint256 checkpoint,
@@ -259,6 +286,14 @@ contract LibLeakyBucketTest is Test {
     ) external pure {
         uint256 at = LibLeakyBucket.fillableAt(level, checkpoint, timestamp, capacity, leakRate, amount);
         if (at == type(uint256).max) {
+            if (amount <= LibLeakyBucket.headroomAt(level, checkpoint, timestamp, capacity, leakRate)) {
+                // Not never. The amount fits at `timestamp`, so the answer is
+                // `timestamp`, and the only clock that answer can collide with
+                // the sentinel at is the top of the word.
+                assertEq(timestamp, type(uint256).max);
+                return;
+            }
+            assertGt(amount, LibLeakyBucket.headroomAt(level, checkpoint, type(uint256).max - 1, capacity, leakRate));
             return;
         }
 
@@ -271,7 +306,10 @@ contract LibLeakyBucketTest is Test {
     }
 
     /// An amount larger than the capacity never fits, however long anyone
-    /// waits, and a bucket that does not drain never makes room.
+    /// waits. That is the only claim this test makes: `leakRate` is
+    /// unconstrained here, but `amount > capacity` short circuits before the
+    /// zero rate branch is reached, so nothing about a bucket that does not
+    /// drain is exercised by any input to this test.
     function testFillableAtNeverForImpossibleAmounts(
         uint256 level,
         uint256 checkpoint,
