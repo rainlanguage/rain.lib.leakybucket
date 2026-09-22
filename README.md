@@ -289,18 +289,14 @@ third above the figure it brackets — so they catch a large compiler or EVM
 change; they do not pin the numbers below, which are read off that test's output
 and updated by hand.
 
-| Path                              | Gas    | Previously |
-| --------------------------------- | ------ | ---------- |
-| Steady state fill (non zero slot) | 9,050  | 9,207      |
-| First fill (zero slot)            | 23,638 | 23,795     |
-| Rejected fill                     | 8,303  | 8,303      |
+| Path                              | Gas    |
+| --------------------------------- | ------ |
+| Steady state fill (non zero slot) | 9,207  |
+| First fill (zero slot)            | 23,795 |
+| Rejected fill                     | 8,303  |
 
-The 157 gas each successful fill lost is `pack`'s two guards, removed because
-they were unreachable: `fill` establishes both bounds before `pack` is called,
-so re-checking them at the word could only ever confirm what the parameter check
-had already refused. A rejected fill is unchanged to the gas because it reverts
-before `pack` is reached at all. Attributed by restoring the two guards alone
-and re-measuring, which reproduces the previous column exactly.
+157 of each successful fill is `pack`'s two overflow guards. A rejected fill does
+not pay it, because it reverts before reaching `pack`.
 
 ## Why this exists
 

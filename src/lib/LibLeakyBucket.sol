@@ -31,6 +31,10 @@ error LeakyBucketCapacityOverflow(uint256 capacity);
 /// @param timestamp The timestamp that did not fit.
 error LeakyBucketTimestampOverflow(uint256 timestamp);
 
+/// @dev Thrown when a level does not fit the packed field.
+/// @param level The level that did not fit.
+error LeakyBucketLevelOverflow(uint256 level);
+
 /// @title LibLeakyBucket
 /// @notice A leaky bucket meter over one 256 bit word of caller-held state.
 ///
@@ -443,33 +447,17 @@ library LibLeakyBucket {
 
     /// Pack a level and a timestamp into one word. The layout, in one place.
     ///
-    /// Neither field is re-checked here, and that is a statement about `fill`
-    /// rather than an omission. `fill` is the only caller and it establishes
-    /// both bounds before it gets here:
-    ///
-    /// - The level. `checkFillableDomain` refuses a `capacity` above
-    ///   `LEAKY_BUCKET_LEVEL_MAX`, `unpack` can only ever produce a level at or
-    ///   below it, and `fillAt` returns at most the larger of that level and
-    ///   the capacity. So the level is at or below `LEAKY_BUCKET_LEVEL_MAX` and
-    ///   the shift cannot truncate it or reach a timestamp bit.
-    /// - The timestamp. `checkFillableDomain` refuses one above
-    ///   `LEAKY_BUCKET_TIMESTAMP_MAX`, and the stored checkpoint it is compared
-    ///   against came out of `unpack`'s mask, so the larger of the two is
-    ///   within the field.
-    ///
-    /// Truncation is still the failure this ordering exists to prevent, and it
-    /// is prevented at the parameter rather than at the word. A time field that
-    /// wrapped would read as a checkpoint far in the past, which is an enormous
-    /// leak, which is a full bucket of headroom that was never earned; a
-    /// wrapped level would read as a far emptier bucket than reality. A cap
-    /// that fails open is worse than one that fails closed, so the capacity and
-    /// the clock are refused up front, by name, where a caller can act on which
-    /// one was wrong.
-    /// @param level The level to pack. At or below `LEAKY_BUCKET_LEVEL_MAX`.
-    /// @param timestamp The timestamp to pack, in seconds. At or below
-    /// `LEAKY_BUCKET_TIMESTAMP_MAX`.
+    /// Both fields are checked. A field that wrapped would fail open and do it
+    /// silently: a wrapped timestamp reads as a checkpoint far in the past,
+    /// which is a full bucket of headroom nobody earned.
+    /// @param level The level to pack.
+    /// @param timestamp The timestamp to pack, in seconds.
     /// @return The packed checkpoint.
     function pack(uint256 level, uint256 timestamp) private pure returns (uint256) {
+        if (level > LEAKY_BUCKET_LEVEL_MAX) {
+            revert LeakyBucketLevelOverflow(level);
+        }
+        checkTimestamp(timestamp);
         unchecked {
             return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;
         }

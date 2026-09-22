@@ -45,10 +45,6 @@ the capacity, otherwise record it.
 - **Removed:** the packed `levelAt`. `headroomAt(word, t, LEAKY_BUCKET_LEVEL_MAX,
   rate)` is `LEAKY_BUCKET_LEVEL_MAX - level` exactly, so anyone holding the word
   already has it.
-- **Removed:** the error `LeakyBucketLevelOverflow(uint256)`, with the two
-  guards in `pack` that raised it. `fill` bounds both fields at the parameter
-  before `pack` is reached, so those guards could only confirm a refusal that
-  had already happened. Worth 157 gas on every successful fill.
 - **Kept:** `headroomAt`. `fill` reverts naming a capacity, not a bucket; two
   buckets can share a capacity; and an `internal` revert cannot be caught and
   relabelled in the frame that raised it. A caller metering one amount through

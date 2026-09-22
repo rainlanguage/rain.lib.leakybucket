@@ -395,3 +395,34 @@ name = "M53 layout: level max narrowed, so a storable capacity is refused"
 file = "src/lib/LibLeakyBucket.sol"
 target = 'uint256 internal constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> LEAKY_BUCKET_TIMESTAMP_BITS;'
 replacement = 'uint256 internal constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> (LEAKY_BUCKET_TIMESTAMP_BITS + 1);'
+
+# ---------------- pack's restored overflow guards ----------------
+
+[[mutants]]
+name = "M54 pack: level guard off by one, rejects the widest storable level"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'if (level > LEAKY_BUCKET_LEVEL_MAX) {'
+replacement = 'if (level >= LEAKY_BUCKET_LEVEL_MAX) {'
+
+[[mutants]]
+name = "M55 pack: level guard never fires, so a wide level truncates into the clock"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'if (level > LEAKY_BUCKET_LEVEL_MAX) {'
+replacement = 'if (level > type(uint256).max) {'
+
+[[mutants]]
+name = "M56 pack: level guard raises the capacity error, hiding which field is wrong"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'revert LeakyBucketLevelOverflow(level);'
+replacement = 'revert LeakyBucketCapacityOverflow(level);'
+
+[[mutants]]
+name = "M57 pack: the timestamp is packed unchecked"
+file = "src/lib/LibLeakyBucket.sol"
+target = '''
+        checkTimestamp(timestamp);
+        unchecked {
+            return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'''
+replacement = '''
+        unchecked {
+            return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;'''
