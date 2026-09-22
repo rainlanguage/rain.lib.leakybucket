@@ -86,14 +86,26 @@ contract LibLeakyBucketGasTest is Test {
         console2.log("saving (load only)", unpackedGas - packedGas);
 
         assertGt(unpackedGas, packedGas);
-        // One extra cold `SLOAD`, which is 2100 gas, less the two guards the
-        // codec runs and the two slot harness does not: the bound on a capacity
-        // the packed level field cannot hold, and the comparison that keeps the
-        // stored checkpoint from going backwards. Together they are worth ~78
-        // gas, and `UnpackedBucket` buys neither, because a level kept in a
-        // whole word has no packed width to exceed.
-        assertGt(unpackedGas - packedGas, 1_800);
-        assertLt(unpackedGas - packedGas, 2_100);
+        // One extra cold `SLOAD`, which is 2100 gas, net of what each side
+        // computes around it. Measured at 2,054 — up from the 1,947 this
+        // asserted before `UnpackedBucket` was corrected to keep its checkpoint
+        // monotonic, because that guard is DEARER unpacked than packed.
+        //
+        // The individual figures, each measured by deleting the line and
+        // re-running `testGasSteadyStateFill`:
+        //
+        // - `checkCapacity`, 55 gas, codec only. A level kept in a whole word
+        //   has no packed width to exceed, so the two slot layout has no reason
+        //   to bound the capacity and does not.
+        // - The monotonic checkpoint comparison, 23 gas in the codec against
+        //   137 in `UnpackedBucket`. Both pay it — any correct direct embedding
+        //   must — but the codec compares a field of a word it is already
+        //   holding, while the two slot layout reloads its checkpoint slot.
+        //
+        // The remainder is the packing shifts and masks, which the two slot
+        // layout does not pay either.
+        assertGt(unpackedGas - packedGas, 1_900);
+        assertLt(unpackedGas - packedGas, 2_200);
     }
 
     /// One slot against two, on the extra `SSTORE`.
