@@ -302,47 +302,64 @@ name = "M40 headroomAt: domain guard dropped, so it answers where fill refuses"
 file = "src/lib/LibLeakyBucket.sol"
 target = '''
         checkFillableDomain(capacity, timestamp);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));'''
+        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
+        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));'''
 replacement = '''
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));'''
+        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
+        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));'''
 
 [[mutants]]
 name = "M41 headroomAt: reads the clock as its own checkpoint"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));'
-replacement = 'return headroomFrom(capacity, levelAt(level, timestamp, timestamp, leakRate));'
+target = 'return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));'
+replacement = 'return headroomFrom(capacity, levelAt(level, timestamp, timestamp, bucket.leakRate));'
 
 [[mutants]]
 name = "M42 headroomAt: capacity and level swapped into headroomFrom"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));'
-replacement = 'return headroomFrom(levelAt(level, checkpointTimestamp, timestamp, leakRate), capacity);'
+target = 'return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));'
+replacement = 'return headroomFrom(levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate), capacity);'
 
 # ---------------- LibLeakyBucket.fill ----------------
+# M58 and M59 are the struct API's own plumbing. `fill` writes the checkpoint
+# back itself now, and reads its policy out of the bucket's fields rather than
+# from arguments, so both are places a bug can sit that no earlier entry had.
 [[mutants]]
 name = "M43 fill: domain guard dropped, so it acts where headroomAt refuses"
 file = "src/lib/LibLeakyBucket.sol"
 target = '''
         checkFillableDomain(capacity, timestamp);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return pack('''
+        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
+        bucket.checkpoint = pack('''
 replacement = '''
-        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
-        return pack('''
+        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
+        bucket.checkpoint = pack('''
 
 [[mutants]]
 name = "M44 fill: reads the clock as its own checkpoint, crediting no leak"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),'
-replacement = 'fillAt(level, timestamp, timestamp, capacity, leakRate, amount),'
+target = 'fillAt(level, checkpointTimestamp, timestamp, capacity, bucket.leakRate, amount),'
+replacement = 'fillAt(level, timestamp, timestamp, capacity, bucket.leakRate, amount),'
 
 [[mutants]]
 name = "M45 fill: the fill is dropped, only the clock advances"
 file = "src/lib/LibLeakyBucket.sol"
-target = 'fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),'
+target = 'fillAt(level, checkpointTimestamp, timestamp, capacity, bucket.leakRate, amount),'
 replacement = 'level,'
+
+[[mutants]]
+name = "M58 fill: the write is dropped, so the bucket never changes"
+file = "src/lib/LibLeakyBucket.sol"
+target = '''
+        bucket.checkpoint = pack('''
+replacement = '''
+        pack('''
+
+[[mutants]]
+name = "M59 fill: the leak rate is read from the capacity field"
+file = "src/lib/LibLeakyBucket.sol"
+target = 'fillAt(level, checkpointTimestamp, timestamp, capacity, bucket.leakRate, amount),'
+replacement = 'fillAt(level, checkpointTimestamp, timestamp, capacity, bucket.capacity, amount),'
 
 [[mutants]]
 name = "M46 fill: stores the OLD checkpoint, double crediting the leak"

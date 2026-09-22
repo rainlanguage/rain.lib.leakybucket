@@ -1,11 +1,10 @@
 # rain.lib.leakybucket
 
-A leaky bucket rate limiter for Solidity, as pure functions.
+A leaky bucket rate limiter for Solidity, over a struct the caller stores.
 
 Built for capping mints on a token, which is security critical and on the hot
-path of every mint, so the whole library is one file exporting two
-`internal
-pure` functions and one constant, with no storage, no owner and no
+path of every mint, so the whole library is one file exporting one struct, two
+`internal` functions over it and one constant, with no storage, no owner and no
 governance of its own.
 
 ## The model
@@ -75,42 +74,40 @@ path, and soldeer keys the remapping it generates on the installed directory
 name, so any other revision of `rain-math-saturating` is remapped under a
 different prefix and the import does not resolve.
 
-The state is one `uint256` per bucket. A zero word is an empty bucket
-checkpointed at the epoch, so an untouched storage slot is already a valid
-starting state and no initializer is needed.
+A bucket is a `LeakyBucket`: the packed checkpoint word, the `capacity` and the
+`leakRate`. Put one wherever a bucket is needed — a mapping by minter, a mapping
+by pair, a single slot — and hand it to `fill`, which reads the three fields and
+writes the checkpoint back itself. A zero checkpoint is an empty bucket at the
+epoch and a zero capacity is a closed door, so an untouched mapping entry is
+already a valid bucket that can mint nothing, and no initializer is needed.
 
 ```solidity
-import {LibLeakyBucket} from "rain-lib-leakybucket-x.y.z/src/lib/LibLeakyBucket.sol";
-
-struct MinterBucket {
-    uint256 checkpoint;
-    uint256 capacity;
-    uint256 leakRate;
-}
+import {LibLeakyBucket, LeakyBucket} from "rain-lib-leakybucket-x.y.z/src/lib/LibLeakyBucket.sol";
 
 contract Token {
-    mapping(address minter => MinterBucket) internal sBuckets;
+    mapping(address minter => LeakyBucket bucket) internal sBuckets;
 
     function mint(address to, uint256 amount) external {
-        MinterBucket storage bucket = sBuckets[msg.sender];
-        bucket.checkpoint =
-            LibLeakyBucket.fill(bucket.checkpoint, block.timestamp, bucket.capacity, bucket.leakRate, amount);
+        LibLeakyBucket.fill(sBuckets[msg.sender], block.timestamp, amount);
         _mint(to, amount);
     }
 }
 ```
 
-One `SLOAD`, one library call, one `SSTORE`. The call reverts with
+Three `SLOAD`s, one library call, one `SSTORE`. The call reverts with
 `LeakyBucketCapacityExceeded(capacity, level, amount)` if the amount does not
-fit, and nothing is written.
+fit, and nothing is written. There is no returned word to store and so no way
+to store it against the wrong key.
 
 ### Governance is yours
 
-`capacity` and `leakRate` are arguments on every call, never library state. The
-library is reached identically from immutables, a timelocked setter, a staged
-upgrade, a governor, or a per minter mapping holding a different pair for every
-minter. It has no opinion about ordering, delay or authority, which is what lets
-it sit under any of them unchanged.
+`capacity` and `leakRate` are fields of the caller's struct, read on every call,
+never library state. Whatever writes them — a constructor, a timelocked setter,
+a staged upgrade, a governor, or a per minter mapping holding a different pair
+for every minter — the library is reached identically. It has no opinion about
+ordering, delay or authority, which is what lets it sit under any of them
+unchanged. Write the two policy fields and leave the checkpoint alone: the
+policy changed, the bucket's history did not.
 
 Two properties make policy changes safe to land at an arbitrary moment:
 
@@ -173,11 +170,13 @@ construction. Neither answers at all for a `capacity` above
 because any answer there would be a promise `fill` breaks.
 
 The level a bucket is carrying is not a second read, because it does not need to
-be: `headroomAt` against `LEAKY_BUCKET_LEVEL_MAX` is
-`LEAKY_BUCKET_LEVEL_MAX -
-level` exactly — a level out of a stored word can
-never exceed that bound, so the saturation never bites and the subtraction
-inverts it. Anyone holding the word can already compute it.
+be: `headroomAt` against a `capacity` of `LEAKY_BUCKET_LEVEL_MAX` is
+`LEAKY_BUCKET_LEVEL_MAX - level` exactly — a level out of a stored word can never
+exceed that bound, so the saturation never bites and the subtraction inverts it.
+`headroomAt` reads the capacity from the bucket it is given, so asking at that
+capacity means asking of a bucket that has it: copy the checkpoint and the rate
+into a scratch `LeakyBucket` with that capacity and read there. The test harness
+does exactly this, and it is a write, so it is not a `view`.
 
 ## Design notes
 
@@ -195,7 +194,7 @@ The leak is `elapsed * leakRate` computed from the checkpoint in one multiply,
 so checkpointing more often cannot change the result:
 
 ```
-levelAt(fill(bucket, t1, capacity, rate, 0), t2) == levelAt(bucket, t2)
+fill(bucket, t1, 0); levelAt(bucket, t2) == levelAt(bucket before the fill, t2)
 ```
 
 for any `t0 <= t1 <= t2`, where `bucket` is checkpointed at `t0` and a zero
@@ -254,8 +253,8 @@ earlier: crediting no leak for the backwards step and then recording the earlier
 second leaves the same interval to be measured again on the next read, which
 pays out exactly the headroom the saturation just declined. That makes the
 property above hold end to end and not only on a read. A caller cannot get this
-wrong, because `fill` returns the level and the second it belongs to as one word
-and the only thing to do with that word is write it back whole.
+wrong, because `fill` writes the level and the second it belongs to as one word,
+itself; the caller never holds the word.
 
 The library **reverts** rather than truncating on a `capacity` or a `timestamp`
 that does not fit the word, and it refuses them at the parameter rather than at
@@ -269,7 +268,9 @@ parameter and saying by name which one was wrong.
 
 ### Storage layout
 
-One word: the level in the high 192 bits, the timestamp in the low 64.
+A `LeakyBucket` is three words: `checkpoint`, `capacity`, `leakRate`. The two
+policy fields are plain numbers. The checkpoint is one word: the level in the
+high 192 bits, the timestamp in the low 64.
 
 | Field       | Width    | Max                                            |
 | ----------- | -------- | ---------------------------------------------- |
@@ -289,8 +290,11 @@ policy change rather than a refused mint.
 
 ## Gas
 
-A fill is one `SLOAD` and one `SSTORE`, which is the point of packing the level
-and the checkpoint into one word.
+A fill reads the bucket's three fields and writes one. The level and its
+timestamp are one word, which is the point of packing them: the whole state
+update is one `SSTORE`, and there is no second write to get wrong. The two
+policy reads are the cost of a bucket being one thing in one place, and they are
+two cold `SLOAD`s that a policy passed as arguments would not pay.
 
 `test/src/lib/LibLeakyBucketGas.t.sol` logs the current figures and asserts a
 coarse band around each. Run it for the numbers. They are not reproduced here: a

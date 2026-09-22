@@ -28,10 +28,21 @@ minimum that does the job it was asked for: refuse an amount that would exceed
 the capacity, otherwise record it.
 
 - `LibLeakyBucketCheckpoint.sol` is **deleted**. Its behaviour is now
-  `LibLeakyBucket`, which is the whole package. A consumer changes the import
-  and the call prefix; the arguments and the returned word are unchanged.
-- The exported surface is `fill`, `headroomAt`, `LEAKY_BUCKET_LEVEL_MAX`, and
-  the three errors `fill` can raise. Everything else is `private`: `leak`,
+  `LibLeakyBucket`, which is the whole package.
+- **The bucket is a struct, and the entry points take it in storage.**
+  `struct LeakyBucket { uint256 checkpoint; uint256 capacity; uint256 leakRate; }`
+  is exported, `fill(LeakyBucket storage, uint256 timestamp, uint256 amount)`
+  writes `bucket.checkpoint` itself and returns nothing, and
+  `headroomAt(LeakyBucket storage, uint256 timestamp)` is a `view`. A consumer
+  puts a `LeakyBucket` wherever a bucket is needed and hands it over; there is
+  no returned word to store and no way to store it against the wrong key. The
+  packed word's layout, `LEAKY_BUCKET_LEVEL_MAX` and the errors are unchanged,
+  so a stored checkpoint carries across as the struct's first field. A fill
+  now reads the policy pair from storage, which is two cold `SLOAD`s a policy
+  passed as arguments did not pay.
+- The exported surface is `LeakyBucket`, `fill`, `headroomAt`,
+  `LEAKY_BUCKET_LEVEL_MAX`, and the three errors `fill` can raise. Everything
+  else is `private`: `leak`,
   `levelAt`, `headroomFrom`, `fillAt`, `pack`, `unpack`, `checkCapacity`,
   `checkTimestamp`, `checkFillableDomain`, and the two width constants
   `LEAKY_BUCKET_TIMESTAMP_BITS` and `LEAKY_BUCKET_TIMESTAMP_MAX`.
@@ -42,11 +53,10 @@ the capacity, otherwise record it.
   your own constructor, in your own units.
 - **Removed:** `fillableAt`, at both layers. It forecasts; it does not rate
   limit.
-- **Removed:** the packed `levelAt`.
-  `headroomAt(word, t, LEAKY_BUCKET_LEVEL_MAX,
-  rate)` is
-  `LEAKY_BUCKET_LEVEL_MAX - level` exactly, so anyone holding the word already
-  has it.
+- **Removed:** the packed `levelAt`. `headroomAt` of a bucket whose `capacity`
+  is `LEAKY_BUCKET_LEVEL_MAX` is `LEAKY_BUCKET_LEVEL_MAX - level` exactly, so
+  anyone holding the checkpoint already has it, through a scratch bucket with
+  that capacity.
 - **Kept:** `headroomAt`. `fill` reverts naming a capacity, not a bucket; two
   buckets can share a capacity; and an `internal` revert cannot be caught and
   relabelled in the frame that raised it. A caller metering one amount through

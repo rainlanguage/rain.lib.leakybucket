@@ -2,18 +2,29 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {LibLeakyBucket} from "../../src/lib/LibLeakyBucket.sol";
+import {LibLeakyBucket, LeakyBucket} from "../../src/lib/LibLeakyBucket.sol";
 
 /// @title PackedBucket
-/// @notice The bucket in one slot, and nothing else: the smallest embedding
-/// that can be measured, so the figures in `LibLeakyBucketGas.t.sol` are the
-/// library's cost rather than a harness's. `LeakyBucketMintCap` is the shape a
-/// real concrete takes; this is the shape a stopwatch takes.
+/// @notice One bucket, and nothing else: the smallest embedding that can be
+/// measured, so the figures in `LibLeakyBucketGas.t.sol` are the library's
+/// cost rather than a harness's. `LeakyBucketMintCap` is the shape a real
+/// concrete takes; this is the shape a stopwatch takes.
+///
+/// The policy is written once, at construction, so a measured `fill` is the
+/// library reading the bucket's three fields and writing its checkpoint and
+/// not a policy write beside it.
 contract PackedBucket {
-    uint256 internal sCheckpoint;
+    /// The bucket. Its `checkpoint` is the first field of the first state
+    /// variable, so it is slot 0, which the gas test reads back directly.
+    LeakyBucket internal sBucket;
 
-    /// One `SLOAD`, the library call, one `SSTORE`.
-    function fill(uint256 capacity, uint256 leakRate, uint256 amount) external {
-        sCheckpoint = LibLeakyBucket.fill(sCheckpoint, block.timestamp, capacity, leakRate, amount);
+    constructor(uint256 capacity, uint256 leakRate) {
+        sBucket.capacity = capacity;
+        sBucket.leakRate = leakRate;
+    }
+
+    /// The library call and nothing else.
+    function fill(uint256 amount) external {
+        LibLeakyBucket.fill(sBucket, block.timestamp, amount);
     }
 }

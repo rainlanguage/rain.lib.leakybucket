@@ -9,7 +9,7 @@ import {WORKED_CAPACITY, WORKED_LEAK_RATE} from "../../lib/WorkedPolicy.sol";
 
 /// The one stateful invariant run in the suite.
 ///
-/// Everything else here is a fuzz over a pure function, or a fuzz over a loop
+/// Everything else here is a fuzz over a single call, or a fuzz over a loop
 /// of a fixed shape. Multi-call histories are the region a mutation ledger
 /// structurally cannot reach — a mutant is killed or not by a single call's
 /// result — and both adversarial findings this repo has already fixed were

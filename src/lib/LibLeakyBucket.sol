@@ -49,7 +49,8 @@ struct LeakyBucket {
 }
 
 /// @title LibLeakyBucket
-/// @notice A leaky bucket meter over one 256 bit word of caller-held state.
+/// @notice A leaky bucket meter over a `LeakyBucket` in the caller's storage:
+/// one packed word of state and the policy pair beside it.
 ///
 /// The bucket holds a `level`. Filling adds to the level and is rejected if the
 /// level would pass `capacity`. The level leaks away continuously at `leakRate`
@@ -105,18 +106,18 @@ struct LeakyBucket {
 ///
 /// ## State is the caller's
 ///
-/// Every function here is `pure` and takes the bucket state as an argument. The
-/// library owns no storage, no slot, no mapping, no owner, no initializer and
-/// no upgrade hook. A concrete contract holds the one word wherever it likes,
-/// under whatever key it likes, and supplies `capacity` and `leakRate` from
-/// wherever its governance puts them: immutables, a timelocked setter, a multi
-/// stage upgrade, or a per minter mapping with a different pair per minter. The
-/// library never sees any of that and cannot constrain it.
+/// Both entry points take a `LeakyBucket` in the caller's storage. The library
+/// owns no storage of its own, no slot, no mapping, no owner, no initializer
+/// and no upgrade hook. A concrete contract puts the struct wherever it likes,
+/// under whatever key it likes, and writes `capacity` and `leakRate` into it
+/// from wherever its governance puts them: a constructor, a timelocked setter,
+/// a multi stage upgrade, or a per minter mapping with a different pair per
+/// minter. The library never sees any of that and cannot constrain it.
 ///
 /// The state is one word: the level in the high 192 bits and the timestamp that
 /// level was recorded at in the low 64. Both fields are read with a shift or a
-/// mask and no keccak, so the whole hot path of a capped mint is: load one
-/// word, one multiply for the leak, one compare against capacity, store one
+/// mask and no keccak, so the whole hot path of a capped mint is: load the
+/// bucket, one multiply for the leak, one compare against capacity, store one
 /// word.
 ///
 /// The packing is not a convenience. `fill` computes a level that belongs to
@@ -124,41 +125,38 @@ struct LeakyBucket {
 /// older timestamp in place credits the same leak again on the next call, which
 /// quietly stops the cap binding. It is a one line mistake with no symptom
 /// until it is exploited, which is the worst shape a bug in a mint cap can
-/// have. Here the two are one word, `fill` returns that word, and the only
-/// thing a caller can do with it is write it back whole. The failure mode is
-/// removed rather than documented.
+/// have. Here the two are one word and `fill` writes it itself; the caller
+/// never holds it. The failure mode is removed rather than documented.
 ///
 /// ```solidity
 /// // One bucket per minter, each with its own policy, governed however the
 /// // concrete likes.
-/// mapping(address minter => uint256 checkpoint) internal sBuckets;
-/// mapping(address minter => uint256 capacity) internal sCapacity;
-/// mapping(address minter => uint256 leakRate) internal sLeakRate;
+/// mapping(address minter => LeakyBucket bucket) internal sBuckets;
 ///
 /// function mint(address to, uint256 amount) external {
-///     sBuckets[msg.sender] = LibLeakyBucket.fill(
-///         sBuckets[msg.sender], block.timestamp, sCapacity[msg.sender], sLeakRate[msg.sender], amount
-///     );
+///     LibLeakyBucket.fill(sBuckets[msg.sender], block.timestamp, amount);
 ///     _mint(to, amount);
 /// }
 /// ```
 ///
-/// A zero word is a valid initial state and means an empty bucket checkpointed
-/// at the epoch. No initializer is needed: an untouched slot is a bucket that
-/// has been empty since before the chain existed, which is exactly what it
-/// should be.
+/// A zero checkpoint is a valid initial state and means an empty bucket
+/// checkpointed at the epoch. No initializer is needed: an untouched slot is a
+/// bucket that has been empty since before the chain existed, which is exactly
+/// what it should be. A zero capacity beside it is a closed door, so an
+/// unconfigured bucket fails closed.
 ///
 /// The same identity is a hazard on the way out, and the library cannot see the
-/// difference: a slot that is *cleared* reads identically to one that was never
-/// used. `delete` on a bucket is not cleanup, it is a full refund of whatever
-/// was outstanding, granted at that instant. A concrete that tidies up after a
-/// revoked minter with `delete sBuckets[minter]`, and later grants that address
-/// the role again, has handed it a fresh `capacity` that no elapsed time paid
-/// for. Re-keying buckets in a storage migration does the same thing. The
-/// per-burst bound this library enforces is per slot, so anything that resets a
-/// slot resets the bound with it: leave a retired bucket where it is (it costs
-/// nothing, and it leaks down on its own), and carry the word across verbatim
-/// when state has to move.
+/// difference: a checkpoint that is *cleared* reads identically to one that was
+/// never used. `delete` on a bucket is not cleanup, it is a full refund of
+/// whatever was outstanding, granted at that instant. A concrete that tidies up
+/// after a revoked minter with `delete sBuckets[minter]`, and later grants that
+/// address a policy again, has handed it a fresh `capacity` that no elapsed
+/// time paid for. Re-keying buckets in a storage migration does the same thing.
+/// The per-burst bound this library enforces is per bucket, so anything that
+/// resets a checkpoint resets the bound with it: leave a retired bucket where
+/// it is (it costs nothing, and it leaks down on its own), write the policy
+/// fields and never the checkpoint when governance changes, and carry the
+/// struct across verbatim when state has to move.
 ///
 /// ## Seconds, not blocks
 ///
