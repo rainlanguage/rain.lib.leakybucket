@@ -189,15 +189,32 @@ contract LeakyBucketEmbeddingTest is Test {
         uint256 at = cap.fillableAt(ALICE, CAPACITY / 2);
         assertEq(at, block.timestamp + DRAIN / 2);
 
+        // One second early the bucket has leaked for one second less than the
+        // wait, so it is exactly one second's leak short of fitting. The level
+        // and the headroom at that instant are both pinned, and the revert is
+        // matched on its full data, so this cannot pass on an arithmetic panic,
+        // an out of gas, or a rejection of some other amount — which a bare
+        // `vm.expectRevert()` could not tell apart from the cap binding.
+        uint256 levelJustEarly = CAPACITY - (DRAIN / 2 - 1) * LEAK_RATE;
         vm.warp(at - 1);
+        assertEq(cap.level(ALICE), levelJustEarly);
+        assertEq(cap.headroom(ALICE), CAPACITY / 2 - LEAK_RATE);
         vm.prank(ALICE);
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, levelJustEarly, CAPACITY / 2)
+        );
         cap.mint(CAPACITY / 2);
 
+        // And nothing was written by the rejected attempt: at `at` the level is
+        // what the leak alone makes it, and the amount that was refused a
+        // second ago now fits exactly.
         vm.warp(at);
+        assertEq(cap.level(ALICE), CAPACITY / 2);
+        assertEq(cap.headroom(ALICE), CAPACITY / 2);
         vm.prank(ALICE);
         cap.mint(CAPACITY / 2);
         assertEq(cap.totalMinted(), CAPACITY + CAPACITY / 2);
+        assertEq(cap.headroom(ALICE), 0);
     }
 
     /// However a minter splits its calls, and however long it waits between
