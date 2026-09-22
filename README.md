@@ -3,8 +3,9 @@
 A leaky bucket rate limiter for Solidity, as pure functions.
 
 Built for capping mints on a token, which is security critical and on the hot
-path of every mint, so the whole library is two files, both `internal`, both
-`pure`, with no storage, no owner and no governance of its own.
+path of every mint, so the whole library is one file exporting two `internal
+pure` functions and one constant, with no storage, no owner and no governance of
+its own.
 
 ## The model
 
@@ -78,7 +79,7 @@ checkpointed at the epoch, so an untouched storage slot is already a valid
 starting state and no initializer is needed.
 
 ```solidity
-import {LibLeakyBucketCheckpoint} from "rain-lib-leakybucket-x.y.z/src/lib/LibLeakyBucketCheckpoint.sol";
+import {LibLeakyBucket} from "rain-lib-leakybucket-x.y.z/src/lib/LibLeakyBucket.sol";
 
 contract Token {
     mapping(address minter => uint256 checkpoint) internal sBuckets;
@@ -86,7 +87,7 @@ contract Token {
     mapping(address minter => uint256 leakRate) internal sLeakRate;
 
     function mint(address to, uint256 amount) external {
-        sBuckets[msg.sender] = LibLeakyBucketCheckpoint.fill(
+        sBuckets[msg.sender] = LibLeakyBucket.fill(
             sBuckets[msg.sender], block.timestamp, sCapacity[msg.sender], sLeakRate[msg.sender], amount
         );
         _mint(to, amount);
@@ -125,63 +126,52 @@ Two properties make policy changes safe to land at an arbitrary moment:
 - **An unconfigured minter can mint nothing.** A zero capacity is a closed door,
   so forgetting to configure a minter fails closed.
 
-The one bound the codec does impose is an upper one, because it follows from the
-packing rather than from any policy view: a `capacity` above
-`LEAKY_BUCKET_LEVEL_MAX` is a cap the one word layout cannot enforce, and every
-packed call that takes a `capacity` reverts `LeakyBucketCapacityOverflow` rather
-than half enforcing it. `LibLeakyBucketCheckpoint.checkCapacity` is the same
-guard on its own, so a setter can refuse the policy at the moment it is set:
+The one bound the library does impose is an upper one, because it follows from
+the packing rather than from any policy view: a `capacity` above
+`LEAKY_BUCKET_LEVEL_MAX` is a cap the one word layout cannot enforce, and both
+entry points revert `LeakyBucketCapacityOverflow` rather than half enforcing it.
+That constant is exported for exactly one reason — a setter can then refuse the
+policy at the moment it is set, which is the only point at which it can be fixed
+rather than merely detected:
 
 ```solidity
 function setCapacity(address minter, uint256 capacity) external onlyGovernance {
-    LibLeakyBucketCheckpoint.checkCapacity(capacity);
+    if (capacity > LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX) {
+        revert LeakyBucketCapacityOverflow(capacity);
+    }
     sCapacity[minter] = capacity;
 }
 ```
 
 ### Reading without filling
 
-- `headroomAt` — what would fit right now.
-- `levelAt` — what is outstanding right now.
-- `fillableAt` — the earliest second a given amount would fit, or
-  `type(uint256).max` for never. A view for callers and frontends; nothing in
-  the enforcement path consults it.
+`headroomAt` is the one read, and it is exported for one reason: **a caller
+metering one amount through several buckets cannot otherwise say which of them
+refused it.**
 
-`headroomAt` is exactly what `fill` takes: the amount it names always fits, and
-one unit more is always rejected. `fillableAt` names a second at which the fill
-it was asked about would be accepted. Neither answers at all for a `capacity`
-the codec cannot enforce, because any answer there would be a promise `fill`
-would break.
+`fill` reverts with `LeakyBucketCapacityExceeded(capacity, level, amount)`,
+which names a policy and a state but not a bucket, and two buckets can be
+running the same `capacity`. `fill` is `internal`, so the revert cannot be
+caught and relabelled in the frame that raised it. A caller that must attribute
+the rejection — a token metering every mint through a global bucket and a per
+minter one, where "which cap bound" decides whether an operator raises a limit
+or revokes a key — therefore has to ask before it fills, and this is the
+question. Computing it outside the library instead means re-deriving the leak,
+the field widths and the saturation directions outside the library that exists
+to hold them.
 
-The one promise they do not police is the time field. Both answer for a
-`timestamp` above `LEAKY_BUCKET_TIMESTAMP_MAX`, and `fillableAt` can name a
-second above it, where `fill` reverts `LeakyBucketTimestampOverflow` rather than
-accepting. So that is the one input at which the reads and `fill` disagree — and
-it is ~5.8e11 years out, which is not a second `block.timestamp` can hand you.
+What it answers is exactly what `fill` takes: the amount it names always fits,
+one unit more is always rejected, and the two are guarded by the same domain
+check and computed through the same saturation, so they agree at every input by
+construction. Neither answers at all for a `capacity` above
+`LEAKY_BUCKET_LEVEL_MAX` or a `timestamp` above `LEAKY_BUCKET_TIMESTAMP_MAX`,
+because any answer there would be a promise `fill` breaks.
 
-### The pure core
-
-`LibLeakyBucketCheckpoint` is the packed convenience layer over
-`LibLeakyBucket`, which takes `(level, checkpoint)` as separate arguments and
-imposes no encoding at all. Use it directly if the packed widths do not suit,
-for example to keep the level in a wider field, or to hold bucket state
-somewhere other than a storage word.
-
-Be aware of what the codec is protecting against if you do.
-`LibLeakyBucket.fillAt` returns a level belonging to the timestamp it was
-evaluated at; storing that level while leaving the old checkpoint timestamp in
-place credits the same leak again on the next call and the cap quietly stops
-binding. It is a one line mistake with no symptom until it is exploited. The
-codec returns the level and the timestamp as one word so there is no second
-write to forget.
-
-The other obligation a direct caller takes on is that **a stored checkpoint must
-never move backwards.** A fill at a time at or behind the stored checkpoint
-credits no leak, so the level it returns belongs to the checkpoint rather than
-to the supplied time; writing the earlier second back leaves an interval that
-has already been paid for to be measured again on the next read, which hands out
-headroom nobody waited for. Store the later of the two. The codec does that
-itself, so it is only a hazard for state held outside it.
+The level a bucket is carrying is not a second read, because it does not need to
+be: `headroomAt` against `LEAKY_BUCKET_LEVEL_MAX` is `LEAKY_BUCKET_LEVEL_MAX -
+level` exactly — a level out of a stored word can never exceed that bound, so
+the saturation never bites and the subtraction inverts it. Anyone holding the
+word can already compute it.
 
 ## Design notes
 
@@ -199,10 +189,12 @@ The leak is `elapsed * leakRate` computed from the checkpoint in one multiply,
 so checkpointing more often cannot change the result:
 
 ```
-levelAt(levelAt(level, t0, t1, rate), t1, t2, rate) == levelAt(level, t0, t2, rate)
+levelAt(fill(bucket, t1, capacity, rate, 0), t2) == levelAt(bucket, t2)
 ```
 
-for any `t0 <= t1 <= t2`. Exactly, at every input, with no rounding slack. It is
+for any `t0 <= t1 <= t2`, where `bucket` is checkpointed at `t0` and a zero
+amount fill is a checkpoint and nothing else. Exactly, at every input, with no
+rounding slack. It is
 fuzzed over the unbounded input space, and it is also checked end to end through
 storage: a half hour taken in one step lands on the same level as the same half
 hour taken a second at a time with a write every second.
@@ -228,12 +220,11 @@ from
 covering commit `22e58d7`; same licence as this library).
 
 No overflow guard is hand rolled around those operations. What is hand written
-is `unchecked`, in five places: the sum in `fillAt`, the `capacity - amount` and
-the ceiling division in `fillableAt` — each bounded by a check that runs before
-it, with that bound stated in a comment at the block — and the shift and mask in
-the codec's `pack` and `unpack`, which are bit operations that cannot overflow
-at all. None of them is a guard, and none of them is out of scope for a review
-of the arithmetic.
+is `unchecked`, in three places: the sum that applies the fill, bounded by the
+headroom check that runs before it with that bound stated in a comment at the
+block, and the shift and mask in `pack` and `unpack`, which are bit operations
+that cannot overflow at all. None of them is a guard, and none of them is out of
+scope for a review of the arithmetic.
 
 The saturation directions are chosen so the failure mode is always a tighter cap
 or a drained bucket, never free headroom:
@@ -256,19 +247,19 @@ clock stores **the later of that clock and the stored checkpoint**, never the
 earlier: crediting no leak for the backwards step and then recording the earlier
 second leaves the same interval to be measured again on the next read, which
 pays out exactly the headroom the saturation just declined. That makes the
-property above hold end to end and not only on a read, and it is what a caller
-holding `(level, checkpoint)` outside the codec has to reproduce.
+property above hold end to end and not only on a read. A caller cannot get this
+wrong, because `fill` returns the level and the second it belongs to as one word
+and the only thing to do with that word is write it back whole.
 
-The packed codec **reverts** rather than truncating on an oversized level or
-timestamp. A truncated time field reads as a checkpoint in the distant past,
-which is an enormous leak, which is a full bucket of headroom nobody waited for.
-Failing closed at an unreachable date beats failing open at a reachable one.
-
-It reverts on an unenforceable `capacity` for the same reason and with the same
-preference for failing loudly: a capacity above `LEAKY_BUCKET_LEVEL_MAX` permits
-a level the word cannot hold, so clamping it would enforce a policy nobody set
-and leaving it would have `headroomAt` name an amount `fill` refuses. Both are
-worse than refusing the parameter and saying which one it was.
+The library **reverts** rather than truncating on a `capacity` or a `timestamp`
+that does not fit the word, and it refuses them at the parameter rather than at
+the packing. A truncated time field reads as a checkpoint in the distant past,
+which is an enormous leak, which is a full bucket of headroom nobody waited for;
+failing closed at an unreachable date beats failing open at a reachable one. A
+capacity above `LEAKY_BUCKET_LEVEL_MAX` permits a level the word cannot hold, so
+clamping it would enforce a policy nobody set and leaving it would have
+`headroomAt` name an amount `fill` refuses. Both are worse than refusing the
+parameter and saying by name which one was wrong.
 
 ### Storage layout
 
@@ -279,43 +270,37 @@ One word: the level in the high 192 bits, the timestamp in the low 64.
 | `level`     | 192 bits | ~6.2e57, or 6.2e39 whole tokens at 18 decimals |
 | `timestamp` | 64 bits  | ~5.8e11 years                                  |
 
-`unpack` is total, so any word in the space reads as some valid bucket.
+Reading a word is total, so any word in the space reads as some valid bucket. A
+zero word is an empty bucket at the epoch, which is why an untouched slot needs
+no initializer — and, on the way out, why `delete` on a bucket is a full refund
+of whatever was outstanding rather than cleanup.
 
-`LEAKY_BUCKET_LEVEL_MAX` is therefore the widest `capacity` the codec can
-enforce, and every packed call that takes a `capacity` rejects one above it with
+`LEAKY_BUCKET_LEVEL_MAX` is therefore the widest `capacity` the library can
+enforce, and both entry points reject one above it with
 `LeakyBucketCapacityOverflow(capacity)`. Governance should reject it at the
-moment it is set as well, with `checkCapacity`, so the failure is a refused
+moment it is set as well, against that constant, so the failure is a refused
 policy change rather than a refused mint.
 
 ## Gas
 
 Measured by `test/src/lib/LibLeakyBucketGas.t.sol`, which logs each figure and
-asserts a band around it. The bands are coarse: the widest admits a value a
-third above the figure it brackets, and the saving on the extra `SSTORE` is
-bounded from below only. They catch a large compiler or EVM change; they do not
-pin the numbers below, which are read off that test's output and updated by
-hand.
+asserts a band around it. The bands are coarse — the widest admits a value a
+third above the figure it brackets — so they catch a large compiler or EVM
+change; they do not pin the numbers below, which are read off that test's output
+and updated by hand.
 
-| Path                              | Gas    |
-| --------------------------------- | ------ |
-| Steady state fill (non zero slot) | 9,207  |
-| First fill (zero slot)            | 23,795 |
-| Rejected fill                     | 8,303  |
+| Path                              | Gas    | Previously |
+| --------------------------------- | ------ | ---------- |
+| Steady state fill (non zero slot) | 9,050  | 9,207      |
+| First fill (zero slot)            | 23,638 | 23,795     |
+| Rejected fill                     | 8,303  | 8,303      |
 
-Against the same bucket held in two slots instead of one: **1,807** saved on the
-extra cold `SLOAD` in the steady state, and **21,707** on the extra `SSTORE` for
-a first fill. The two are measured separately because `forge` carries its dirty
-slot journal across from `setUp`, so a single steady state measurement cannot
-price the second `SSTORE`.
-
-That 1,807 is a net figure, not the price of one opcode. The two slot layout
-pays one extra cold `SLOAD`, 2,100 gas, and one extra `SSTORE`; against that the
-codec pays for its own packing and for the comparisons a two slot layout has no
-reason to run — the bounds on a `capacity` the packed level field cannot hold
-and on a `timestamp` it cannot record, the level and the timestamp `pack`
-refuses to truncate, and the check that keeps the stored checkpoint from moving
-backwards. 1,807 is what is left of the one after the other, and it shrinks each
-time the codec takes on another bound the unpacked form does not owe.
+The 157 gas each successful fill lost is `pack`'s two guards, removed because
+they were unreachable: `fill` establishes both bounds before `pack` is called,
+so re-checking them at the word could only ever confirm what the parameter check
+had already refused. A rejected fill is unchanged to the gas because it reverts
+before `pack` is reached at all. Attributed by restoring the two guards alone
+and re-measuring, which reproduces the previous column exactly.
 
 ## Why this exists
 
@@ -342,7 +327,7 @@ in CI.
 
 ## Audit scope
 
-Not yet audited. The intended scope is `src/`, which is two files and no
+Not yet audited. The intended scope is `src/`, which is one file and no
 dependencies beyond `LibSaturatingMath`. That one is already audited, and the
 reviewed artefact is the one this library compiles: Protofire reviewed
 `rain.math.saturating` at commit `22e58d7` in January 2026, and
@@ -362,14 +347,17 @@ implementation to are the ones fuzzed in `test/src/lib/`:
 - Every saturation goes the conservative way, per the table above.
 - A stored checkpoint never moves backwards, so a fill at a stale clock is not
   observable at any later second.
-- The packed codec round trips, is total on `unpack`, does not alias its fields,
-  and reverts rather than truncating.
-- The packed reads and `fill` agree at every input either will answer, and
-  refuse the same capacities.
+- The word round trips, reading it is total, its two fields do not alias, and a
+  parameter that would not fit is refused by name rather than truncated.
+- `headroomAt` and `fill` agree at every input either will answer, and refuse
+  exactly the same capacities and the same seconds.
 
-`test/lib/LibLeakyBucketSlow.sol` is the differential oracle: the same leak
-written as a one-second-at-a-time loop, which the closed form is checked
-against.
+`test/lib/` holds the differential oracles, each a second and dumber statement
+of something `src/` does, kept apart from the thing that ships:
+`LibLeakyBucketSlow` is the same leak written as a one-second-at-a-time loop,
+which the closed form is checked against, and `LibCheckpointWord` is the word
+layout restated as literals, so the tests that pin the layout are an oracle
+rather than an echo.
 
 ## Development
 

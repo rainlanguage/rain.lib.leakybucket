@@ -4,10 +4,12 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
-import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
-import {LeakyBucketCapacityOverflow, LEAKY_BUCKET_LEVEL_MAX} from "../../../src/lib/LibLeakyBucketCheckpoint.sol";
+import {
+    LibLeakyBucket,
+    LeakyBucketCapacityExceeded,
+    LeakyBucketCapacityOverflow
+} from "../../../src/lib/LibLeakyBucket.sol";
 import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
-import {UnpackedBucket} from "../../concrete/UnpackedBucket.sol";
 
 /// The library under a real storage layout and a real clock, which is where the
 /// mistakes that pure function tests cannot see would show up: state written
@@ -181,13 +183,18 @@ contract LeakyBucketEmbeddingTest is Test {
         assertEq(sCap.headroom(ALICE), CAPACITY / 20);
     }
 
-    /// `fillableAt` tells a caller when to come back, and it is right.
-    function testFillableAtPredictsTheNextMint() external {
+    /// The second a given amount fits again is exactly the second the leak
+    /// pays for it, and not one second earlier.
+    ///
+    /// The library forecasts nothing — the arithmetic here is the caller's, as
+    /// `leakRate` is the caller's — so this is the test that the rate a policy
+    /// names is the rate a caller can plan against. Half a capacity, at one
+    /// unit a second, comes back in exactly half a drain time.
+    function testTheSecondAHalfCapacityFitsAgain() external {
         vm.prank(ALICE);
         sCap.mint(CAPACITY);
 
-        uint256 at = sCap.fillableAt(ALICE, CAPACITY / 2);
-        assertEq(at, block.timestamp + DRAIN / 2);
+        uint256 at = block.timestamp + DRAIN / 2;
 
         // One second early the bucket has leaked for one second less than the
         // wait, so it is exactly one second's leak short of fitting. The level
@@ -311,7 +318,7 @@ contract LeakyBucketEmbeddingTest is Test {
     /// sets it, rather than discovered at mint time by whoever is unlucky
     /// enough to be minting when it first binds.
     function testGovernanceCannotSetAnUnenforceableCapacity() external {
-        uint256 capacity = LEAKY_BUCKET_LEVEL_MAX + 1;
+        uint256 capacity = LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX + 1;
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
         sCap.setPolicy(ALICE, capacity, LEAK_RATE);
@@ -320,41 +327,8 @@ contract LeakyBucketEmbeddingTest is Test {
         // than half applied.
         assertEq(sCap.headroom(ALICE), CAPACITY);
 
-        // The widest capacity the codec can store is settable and binds.
-        sCap.setPolicy(BOB, LEAKY_BUCKET_LEVEL_MAX, LEAK_RATE);
-        assertEq(sCap.headroom(BOB), LEAKY_BUCKET_LEVEL_MAX);
-    }
-
-    /// The same backwards-clock property as `testBackwardsClockBanksNoCredit`,
-    /// but for state held OUTSIDE the codec.
-    ///
-    /// `LibLeakyBucket` cannot enforce this: it is pure and owns no slot, so
-    /// the obligation falls on whoever keeps the checkpoint. The README states
-    /// it in prose and `levelAt`'s NatSpec states it again, and `UnpackedBucket`
-    /// is the only place in the repo where a reader can see the unpacked
-    /// embedding written out — which makes it the artifact that gets copied.
-    /// Enforcing it here means the example cannot quietly regress to the
-    /// unguarded three-line `fill` that reintroduces the bug.
-    function testUnpackedEmbeddingKeepsItsCheckpointMonotonic() external {
-        UnpackedBucket bucket = new UnpackedBucket();
-        bucket.fill(CAPACITY, LEAK_RATE, CAPACITY);
-        assertEq(bucket.headroom(CAPACITY, LEAK_RATE), 0);
-
-        uint256 filled = block.timestamp;
-
-        // The clock falls back a whole drain time and the bucket is touched
-        // with a zero fill, which is a checkpoint and nothing else.
-        vm.warp(filled - DRAIN);
-        bucket.fill(CAPACITY, LEAK_RATE, 0);
-
-        // Back at the second of the original fill it is still full. Without the
-        // comparison in `fill` the stored checkpoint would have gone back with
-        // the clock and this would read as a whole capacity of headroom.
-        vm.warp(filled);
-        assertEq(bucket.headroom(CAPACITY, LEAK_RATE), 0);
-
-        // And one real drain time later it is one capacity, not two.
-        vm.warp(filled + DRAIN);
-        assertEq(bucket.headroom(CAPACITY, LEAK_RATE), CAPACITY);
+        // The widest capacity the library can store is settable and binds.
+        sCap.setPolicy(BOB, LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX, LEAK_RATE);
+        assertEq(sCap.headroom(BOB), LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX);
     }
 }

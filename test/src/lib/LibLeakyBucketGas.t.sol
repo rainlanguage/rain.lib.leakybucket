@@ -4,7 +4,6 @@ pragma solidity =0.8.25;
 
 import {Test, console2} from "forge-std-1.16.2/src/Test.sol";
 import {PackedBucket} from "../../concrete/PackedBucket.sol";
-import {UnpackedBucket} from "../../concrete/UnpackedBucket.sol";
 import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
 import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
 
@@ -26,7 +25,6 @@ contract LibLeakyBucketGasTest is Test {
     uint256 internal constant DRAIN = WORKED_DRAIN;
 
     PackedBucket internal sPacked;
-    UnpackedBucket internal sUnpacked;
 
     /// `PackedBucket`'s only slot as `setUp` left it, for the rejected fill
     /// below to compare against. Taken here and not in the test body because
@@ -38,14 +36,12 @@ contract LibLeakyBucketGasTest is Test {
 
     function setUp() external {
         sPacked = new PackedBucket();
-        sUnpacked = new UnpackedBucket();
         vm.warp(1_700_000_000);
-        // Prime both so the measured fills hit non zero slots, then move the
+        // Prime it so the measured fills hit a non zero slot, then move the
         // clock on by a sixth of a drain time, which is far more leak than the
         // unit primed above, so every measured fill below starts from an empty
         // bucket with a real leak to apply.
         sPacked.fill(CAPACITY, LEAK_RATE, 1e18);
-        sUnpacked.fill(CAPACITY, LEAK_RATE, 1e18);
         vm.warp(block.timestamp + DRAIN / 6);
         sPackedSlotAtSetUp = vm.load(address(sPacked), bytes32(uint256(0)));
     }
@@ -76,64 +72,6 @@ contract LibLeakyBucketGasTest is Test {
         console2.log("packed steady state fill", gas);
         assertGt(gas, 5_000);
         assertLt(gas, 12_000);
-    }
-
-    /// One slot against two, on the extra `SLOAD`.
-    ///
-    /// This measures one half of what the codec saves. `forge` carries the
-    /// dirty slot journal across from `setUp`, so a slot written there is
-    /// already dirty here and its `SSTORE` prices at 100 gas rather than 2900
-    /// however cold the access list is made. `vm.cool` resets the access list
-    /// and not the journal, so it does not recover the other half either. What
-    /// is left visible, and asserted, is the extra cold `SLOAD` the two slot
-    /// layout pays. The `SSTORE` half is measured separately below, where the
-    /// slots are genuinely untouched.
-    function testGasPackedBeatsUnpackedOnTheExtraLoad() external {
-        uint256 packedGas = measure(address(sPacked), 1e18);
-        uint256 unpackedGas = measure(address(sUnpacked), 1e18);
-        console2.log("packed steady state", packedGas);
-        console2.log("unpacked steady state", unpackedGas);
-        console2.log("saving (load only)", unpackedGas - packedGas);
-
-        assertGt(unpackedGas, packedGas);
-        // One extra cold `SLOAD`, which is 2100 gas, net of what each side
-        // computes around it. Measured at 1,807 — up from the 1,681 this
-        // asserted before `UnpackedBucket` was corrected to keep its checkpoint
-        // monotonic, because that guard is DEARER unpacked than packed.
-        //
-        // The individual figures, each measured by deleting the line and
-        // re-running `testGasSteadyStateFill`:
-        //
-        // - `checkCapacity`, 55 gas, codec only. A level kept in a whole word
-        //   has no packed width to exceed, so the two slot layout has no reason
-        //   to bound the capacity and does not.
-        // - The monotonic checkpoint comparison, 23 gas in the codec against
-        //   137 in `UnpackedBucket`. Both pay it — any correct direct embedding
-        //   must — but the codec compares a field of a word it is already
-        //   holding, while the two slot layout reloads its checkpoint slot.
-        //
-        // The remainder is the packing shifts and masks, which the two slot
-        // layout does not pay either.
-        assertGt(unpackedGas - packedGas, 1_700);
-        assertLt(unpackedGas - packedGas, 1_900);
-    }
-
-    /// One slot against two, on the extra `SSTORE`.
-    ///
-    /// Both subjects are freshly deployed, so every slot is zero and untouched
-    /// by this transaction and the full `SSTORE` price is charged. The two slot
-    /// layout pays it twice. This is the cost a real steady state mint also
-    /// carries, at the lower non zero rate, on top of the extra load above.
-    function testGasPackedBeatsUnpackedOnTheExtraStore() external {
-        uint256 packedGas = measure(address(new PackedBucket()), 1e18);
-        uint256 unpackedGas = measure(address(new UnpackedBucket()), 1e18);
-        console2.log("packed first fill", packedGas);
-        console2.log("unpacked first fill", unpackedGas);
-        console2.log("saving (store included)", unpackedGas - packedGas);
-
-        assertGt(unpackedGas, packedGas);
-        // A second zero to non zero `SSTORE` is 22100 gas all in.
-        assertGt(unpackedGas - packedGas, 20_000);
     }
 
     /// A rejected fill costs the read and the revert, and writes nothing. The

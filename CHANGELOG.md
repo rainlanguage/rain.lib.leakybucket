@@ -23,6 +23,38 @@ moves that heading down to the `sol-v` tag the run created.
 
 ## Unreleased
 
+Breaking, and it removes more than it keeps. The library is reduced to the
+minimum that does the job it was asked for: refuse an amount that would exceed
+the capacity, otherwise record it.
+
+- `LibLeakyBucketCheckpoint.sol` is **deleted**. Its behaviour is now
+  `LibLeakyBucket`, which is the whole package. A consumer changes the import
+  and the call prefix; the arguments and the returned word are unchanged.
+- The exported surface is `fill`, `headroomAt`, `LEAKY_BUCKET_LEVEL_MAX`, and
+  the three errors `fill` can raise. Everything else is `private`: `leak`,
+  `levelAt`, `headroomFrom`, `fillAt`, `pack`, `unpack`, `checkCapacity`,
+  `checkTimestamp`, `checkFillableDomain`, and the two width constants
+  `LEAKY_BUCKET_TIMESTAMP_BITS` and `LEAKY_BUCKET_TIMESTAMP_MAX`.
+- **Removed:** `leakRatePer` and `LEAKY_BUCKET_SECONDS_PER_HOUR` / `_DAY` /
+  `_WEEK`. Per second rates are a stated requirement, so a helper that accepts a
+  rate expressed per something else re-opens a decided question, and it does it
+  with a floor division inside a security library. Write `100e18 / 1 days` in
+  your own constructor, in your own units.
+- **Removed:** `fillableAt`, at both layers. It forecasts; it does not rate
+  limit.
+- **Removed:** the packed `levelAt`. `headroomAt(word, t, LEAKY_BUCKET_LEVEL_MAX,
+  rate)` is `LEAKY_BUCKET_LEVEL_MAX - level` exactly, so anyone holding the word
+  already has it.
+- **Removed:** the error `LeakyBucketLevelOverflow(uint256)`, with the two
+  guards in `pack` that raised it. `fill` bounds both fields at the parameter
+  before `pack` is reached, so those guards could only confirm a refusal that
+  had already happened. Worth 157 gas on every successful fill.
+- **Kept:** `headroomAt`. `fill` reverts naming a capacity, not a bucket; two
+  buckets can share a capacity; and an `internal` revert cannot be caught and
+  relabelled in the frame that raised it. A caller metering one amount through
+  several buckets provably cannot say which one refused it without this, so it
+  stays, with that reason in its NatSpec.
+
 ## sol-v0.1.0
 
 First release.

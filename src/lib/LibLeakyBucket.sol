@@ -14,26 +14,25 @@ import {LibSaturatingMath} from "rain-math-saturating-0.1.10/src/lib/LibSaturati
 /// @param amount The amount that was offered and did not fit.
 error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amount);
 
-/// @dev Seconds in an hour, a day and a week, for converting a policy written
-/// in human units into the per second `leakRate` this library takes. They are
-/// here rather than left to the caller because that conversion is the one step
-/// of configuring a bucket that nothing on chain can check.
-///
-/// `capacity` and `leakRate` are both bare `uint256` and there is no unit in
-/// the type, so a rate supplied per day rather than per second is 86400 times
-/// too fast and nothing rejects it. The burst still holds, nothing overflows,
-/// `headroomAt` reports a legitimate number and `fillAt` reverts exactly when
-/// it should, so every test and every first fill behaves as expected. What is
-/// gone is the sustained limit: the bucket refills completely between any two
-/// blocks. The opposite mistake, dividing twice, is the safe direction and
-/// merely throttles. Use `leakRatePer` with one of these rather than a literal.
-uint256 constant LEAKY_BUCKET_SECONDS_PER_HOUR = 3600;
-uint256 constant LEAKY_BUCKET_SECONDS_PER_DAY = 86400;
-uint256 constant LEAKY_BUCKET_SECONDS_PER_WEEK = 604800;
+/// @dev Thrown when the capacity in force is above
+/// `LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX`, which is a level this library
+/// cannot store and therefore a cap it cannot enforce. It is a
+/// misconfiguration rather than a condition to handle at the call site, and it
+/// is named as one: the alternative is `headroomAt` reporting room that `fill`
+/// will not take, and the rejection then naming the packing width instead of
+/// the parameter that is actually wrong.
+/// @param capacity The capacity that cannot be enforced.
+error LeakyBucketCapacityOverflow(uint256 capacity);
+
+/// @dev Thrown when a timestamp does not fit the packed field, which makes it a
+/// second this library cannot record and therefore one `fill` can never act at.
+/// Like `LeakyBucketCapacityOverflow` it names the argument that is wrong
+/// rather than the width that rejected it.
+/// @param timestamp The timestamp that did not fit.
+error LeakyBucketTimestampOverflow(uint256 timestamp);
 
 /// @title LibLeakyBucket
-/// @notice A leaky bucket as a meter, in the textbook form, as pure functions
-/// over 256 bit words.
+/// @notice A leaky bucket meter over one 256 bit word of caller-held state.
 ///
 /// The bucket holds a `level`. Filling adds to the level and is rejected if the
 /// level would pass `capacity`. The level leaks away continuously at `leakRate`
@@ -47,6 +46,19 @@ uint256 constant LEAKY_BUCKET_SECONDS_PER_WEEK = 604800;
 /// - `capacity`, the burst. The most that can be minted in a single block, and
 ///   the most that can ever be outstanding against the cap at one instant.
 /// - `leakRate`, the sustained rate, in units per second.
+///
+/// ## The surface is one function
+///
+/// `fill` is the product. It takes the packed checkpoint a caller has stored,
+/// a clock, the policy pair and an amount, and it either reverts or returns the
+/// word to store back. `headroomAt` is the only other entry point and it exists
+/// for one reason, written into its own NatSpec.
+///
+/// Everything else here is `private`, because everything else here is a step of
+/// `fill` rather than a thing to call. Every exported symbol is surface an
+/// auditor has to read and a caller can misuse, on a library whose entire
+/// purpose is to be what a compromised minter cannot get past, so the default
+/// is that it is not exported.
 ///
 /// ## Before a fill, and after it
 ///
@@ -77,19 +89,60 @@ uint256 constant LEAKY_BUCKET_SECONDS_PER_WEEK = 604800;
 ///
 /// ## State is the caller's
 ///
-/// Every function here is `pure` and takes the bucket state as arguments. The
+/// Every function here is `pure` and takes the bucket state as an argument. The
 /// library owns no storage, no slot, no mapping, no owner, no initializer and
-/// no upgrade hook. A concrete contract holds `(level, checkpoint)` wherever it
-/// likes, under whatever key it likes, and supplies `capacity` and `leakRate`
-/// from wherever its governance puts them: immutables, a timelocked setter, a
-/// multi stage upgrade, or a per minter mapping with a different pair per
-/// minter. The library never sees any of that and cannot constrain it.
+/// no upgrade hook. A concrete contract holds the one word wherever it likes,
+/// under whatever key it likes, and supplies `capacity` and `leakRate` from
+/// wherever its governance puts them: immutables, a timelocked setter, a multi
+/// stage upgrade, or a per minter mapping with a different pair per minter. The
+/// library never sees any of that and cannot constrain it.
 ///
-/// The state is two numbers. `level` is the fill as of `checkpoint`, and
-/// `checkpoint` is the timestamp that level was recorded at. The leak between
-/// `checkpoint` and now is derived on read, so a bucket that is never touched
-/// costs nothing to drain. See `LibLeakyBucketCheckpoint` for the packing that
-/// puts both in one word, and for the `fill` that writes both back together.
+/// The state is one word: the level in the high 192 bits and the timestamp that
+/// level was recorded at in the low 64. Both fields are read with a shift or a
+/// mask and no keccak, so the whole hot path of a capped mint is: load one
+/// word, one multiply for the leak, one compare against capacity, store one
+/// word.
+///
+/// The packing is not a convenience. `fill` computes a level that belongs to
+/// the second it was evaluated at, and storing that level while leaving an
+/// older timestamp in place credits the same leak again on the next call, which
+/// quietly stops the cap binding. It is a one line mistake with no symptom
+/// until it is exploited, which is the worst shape a bug in a mint cap can
+/// have. Here the two are one word, `fill` returns that word, and the only
+/// thing a caller can do with it is write it back whole. The failure mode is
+/// removed rather than documented.
+///
+/// ```solidity
+/// // One bucket per minter, each with its own policy, governed however the
+/// // concrete likes.
+/// mapping(address minter => uint256 checkpoint) internal sBuckets;
+/// mapping(address minter => uint256 capacity) internal sCapacity;
+/// mapping(address minter => uint256 leakRate) internal sLeakRate;
+///
+/// function mint(address to, uint256 amount) external {
+///     sBuckets[msg.sender] = LibLeakyBucket.fill(
+///         sBuckets[msg.sender], block.timestamp, sCapacity[msg.sender], sLeakRate[msg.sender], amount
+///     );
+///     _mint(to, amount);
+/// }
+/// ```
+///
+/// A zero word is a valid initial state and means an empty bucket checkpointed
+/// at the epoch. No initializer is needed: an untouched slot is a bucket that
+/// has been empty since before the chain existed, which is exactly what it
+/// should be.
+///
+/// The same identity is a hazard on the way out, and the library cannot see the
+/// difference: a slot that is *cleared* reads identically to one that was never
+/// used. `delete` on a bucket is not cleanup, it is a full refund of whatever
+/// was outstanding, granted at that instant. A concrete that tidies up after a
+/// revoked minter with `delete sBuckets[minter]`, and later grants that address
+/// the role again, has handed it a fresh `capacity` that no elapsed time paid
+/// for. Re-keying buckets in a storage migration does the same thing. The
+/// per-burst bound this library enforces is per slot, so anything that resets a
+/// slot resets the bound with it: leave a retired bucket where it is (it costs
+/// nothing, and it leaks down on its own), and carry the word across verbatim
+/// when state has to move.
 ///
 /// ## Seconds, not blocks
 ///
@@ -100,6 +153,13 @@ uint256 constant LEAKY_BUCKET_SECONDS_PER_WEEK = 604800;
 /// different cap after a hard fork. A rate in units per second means the same
 /// thing everywhere, which is what makes the same `capacity` and `leakRate`
 /// deployable unchanged on any EVM chain.
+///
+/// `leakRate` is per second and nothing here converts to it. A policy written
+/// as "X per day" is `X / 1 days`, computed by the caller, in the caller's own
+/// units, in front of whoever signs the policy off. A conversion helper in here
+/// would be a division with a rounding direction sitting in an audited security
+/// library: approve "100 per day", have it silently floor, and the enforced cap
+/// is not the number that was approved.
 ///
 /// ## Arithmetic
 ///
@@ -142,31 +202,73 @@ uint256 constant LEAKY_BUCKET_SECONDS_PER_WEEK = 604800;
 ///
 /// The leak is `elapsed * leakRate`, computed from the checkpoint in one
 /// multiply. It is not accrued per call and not derived by dividing a capacity
-/// by a window, so checkpointing more often cannot change the result:
+/// by a window, so checkpointing more often cannot change the result: a fill
+/// split in two at an intermediate second lands on exactly the level one fill
+/// would have, at every input, with no rounding slack, and it is fuzzed.
 ///
-/// ```
-/// levelAt(levelAt(level, t0, t1, rate), t1, t2, rate) == levelAt(level, t0, t2, rate)
-/// ```
-///
-/// for any `t0 <= t1 <= t2`. This holds exactly, at every input, with no
-/// rounding slack, and it is fuzzed. It is worth stating because the common
-/// alternative does not have it. Implementations that store a `window` and
-/// leak at `capacity / window` per second take a floor division on every
-/// checkpoint, so each call throws away the sub unit remainder, and a caller
-/// touching the bucket every second is credited measurably less leak than a
-/// caller touching it once an hour. That turns call frequency into part of the
-/// cap. Here the rate is a parameter rather than a quotient and the checkpoint
-/// is a subtraction from the original, so there is no per call remainder to
-/// lose and frequency is not observable in the result.
-///
-/// The cost is that `leakRate` is expressed per second, so a policy written as
-/// "X per day" has to be converted once, and rounded once, instead of silently
-/// on every call. That conversion is `leakRatePer(X, LEAKY_BUCKET_SECONDS_PER_DAY)`
-/// and it lives here, under test, rather than in whatever spreadsheet produced
-/// the number: it is the one parameter of the two whose misconfiguration is
-/// invisible on chain, so it is the one that gets a guard rail. It rounds down,
-/// so the on chain rate is never faster than the policy that was approved.
+/// It is worth stating because the common alternative does not have it.
+/// Implementations that store a `window` and leak at `capacity / window` per
+/// second take a floor division on every checkpoint, so each call throws away
+/// the sub unit remainder, and a caller touching the bucket every second is
+/// credited measurably less leak than a caller touching it once an hour. That
+/// turns call frequency into part of the cap. Here the rate is a parameter
+/// rather than a quotient and the checkpoint is a subtraction from the
+/// original, so there is no per call remainder to lose and frequency is not
+/// observable in the result.
 library LibLeakyBucket {
+    /// @dev Bits the timestamp occupies in a packed checkpoint, in the low end
+    /// of the word.
+    ///
+    /// The one free parameter of the layout. Both maxima below are derived from
+    /// it rather than spelled independently, so changing it moves the whole
+    /// layout coherently instead of leaving two literals to be re-derived by
+    /// hand.
+    uint256 private constant LEAKY_BUCKET_TIMESTAMP_BITS = 64;
+
+    /// @dev Largest timestamp a packed checkpoint can hold, in seconds. Around
+    /// 5.8e11 years, so it is not a deadline in any sense that needs managing;
+    /// it exists so the width is stated rather than assumed.
+    ///
+    /// Derived rather than spelled, because it is also the mask `unpack`
+    /// applies: every bit below `LEAKY_BUCKET_TIMESTAMP_BITS` and nothing above
+    /// it. Written as `type(uint64).max` it is correct only while the width
+    /// happens to be 64, and a maintainer narrowing the width would get a mask
+    /// wider than the field, which reads level bits back as part of the
+    /// timestamp.
+    ///
+    /// The `uint256(1)` is load bearing rather than noise: a bare `1` on the
+    /// left of the shift trips `forge lint`'s `incorrect-shift` rule, and the
+    /// CI gate runs it with `-D warnings`. It also states the word the shift
+    /// happens in, which is the whole point of the constant.
+    uint256 private constant LEAKY_BUCKET_TIMESTAMP_MAX = (uint256(1) << LEAKY_BUCKET_TIMESTAMP_BITS) - 1;
+
+    /// @dev Largest level a checkpoint can hold, and therefore the largest
+    /// `capacity` this library can enforce. Around 6.2e57, which is 6.2e39
+    /// whole tokens at eighteen decimals.
+    ///
+    /// The one constant that is exported, and it is exported because a caller
+    /// cannot reject an unenforceable capacity without it. `fill` refuses a
+    /// capacity above this with `LeakyBucketCapacityOverflow`, but a mint cap
+    /// finds that out at the first mint, from whoever is unlucky enough to be
+    /// minting when the misconfigured policy first binds. The moment the
+    /// capacity is *set* is the only point at which it can be fixed rather than
+    /// merely detected, and a governance setter refuses it there with
+    ///
+    /// ```solidity
+    /// if (capacity > LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX) {
+    ///     revert LeakyBucketCapacityOverflow(capacity);
+    /// }
+    /// ```
+    ///
+    /// Derived, like the timestamp maximum: the level field is exactly the word
+    /// less the timestamp field, so `pack`'s `unchecked` shift can neither
+    /// truncate a level this bound permits nor reach a timestamp bit. Written
+    /// as `type(uint192).max` it is correct only while the width happens to be
+    /// 64, and a maintainer widening the width would get a bound whose shifted
+    /// value overflows the word, so `pack` would silently truncate the level it
+    /// just accepted.
+    uint256 internal constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> LEAKY_BUCKET_TIMESTAMP_BITS;
+
     /// Level remaining after leaking for `elapsed` seconds at `leakRate` units
     /// per second. Saturates at zero: a bucket cannot leak past empty.
     ///
@@ -179,38 +281,8 @@ library LibLeakyBucket {
     /// @param elapsed The length of the interval in seconds.
     /// @param leakRate The leak in units per second.
     /// @return The level at the end of the interval.
-    function leak(uint256 level, uint256 elapsed, uint256 leakRate) internal pure returns (uint256) {
+    function leak(uint256 level, uint256 elapsed, uint256 leakRate) private pure returns (uint256) {
         return LibSaturatingMath.saturatingSub(level, LibSaturatingMath.saturatingMul(elapsed, leakRate));
-    }
-
-    /// The `leakRate` for a policy of `amountPerPeriod` units per `period`
-    /// seconds. Use it with `LEAKY_BUCKET_SECONDS_PER_DAY` and friends:
-    /// `leakRatePer(amountPerDay, LEAKY_BUCKET_SECONDS_PER_DAY)`.
-    ///
-    /// Rounds DOWN, so the on chain rate is never faster than the policy that
-    /// was approved. A whole `period` at the returned rate leaks at most
-    /// `amountPerPeriod`, and falls short of it by fewer than `period` units,
-    /// which is one unit a second of shortfall and the most a rate quantised to
-    /// whole units per second can be out by. The error is always toward the
-    /// tighter cap.
-    ///
-    /// Rounding down can reach zero, for a policy whose period is longer than
-    /// the amount it allows. A zero rate is a bucket that never drains, which
-    /// is one `capacity` and then nothing, forever. That is the conservative
-    /// direction and is left to the caller to notice rather than rejected here,
-    /// since a deliberately non draining bucket is a legitimate policy.
-    ///
-    /// A `period` of zero is a division by zero and panics. There is nothing to
-    /// saturate toward: a rate per no time is not a slower rate or a faster one,
-    /// it is not a rate. Unlike the arguments the rest of this library takes,
-    /// which are bucket state and a clock, this one is a policy being written
-    /// down, so a caller reaching here with zero has a bug rather than an
-    /// awkward input, and a panic is the right answer.
-    /// @param amountPerPeriod The amount the policy allows per period.
-    /// @param period The period in seconds. Zero panics.
-    /// @return The per second leak rate.
-    function leakRatePer(uint256 amountPerPeriod, uint256 period) internal pure returns (uint256) {
-        return amountPerPeriod / period;
     }
 
     /// Level of a bucket checkpointed at `(level, checkpoint)`, as at
@@ -226,21 +298,19 @@ library LibLeakyBucket {
     /// matters: it can only ever report a level at or above the true level, so
     /// it can only ever hand out less headroom than reality, never more.
     ///
-    /// That is a property of this read, and keeping it takes one thing of
-    /// whoever writes a result back: a stored checkpoint must never move
-    /// backwards. Crediting no leak for a backwards step and then recording the
-    /// earlier second leaves the same interval to be measured again on the next
-    /// read, which pays out exactly the headroom this saturation just refused.
-    /// `LibLeakyBucketCheckpoint.fill` keeps the later of the supplied time and
-    /// the stored one for that reason, and a caller pairing this function with
-    /// a checkpoint of its own owes the bucket the same.
+    /// That is a property of the read, and keeping it takes one thing of the
+    /// write: a stored checkpoint must never move backwards. Crediting no leak
+    /// for a backwards step and then recording the earlier second leaves the
+    /// same interval to be measured again on the next read, which pays out
+    /// exactly the headroom this saturation just refused. `fill` keeps the
+    /// later of the supplied time and the stored one for that reason.
     /// @param level The level recorded at the checkpoint.
     /// @param checkpoint The timestamp `level` was recorded at, in seconds.
     /// @param timestamp The timestamp to evaluate the bucket at, in seconds.
     /// @param leakRate The leak in units per second.
     /// @return The level as at `timestamp`.
     function levelAt(uint256 level, uint256 checkpoint, uint256 timestamp, uint256 leakRate)
-        internal
+        private
         pure
         returns (uint256)
     {
@@ -249,18 +319,13 @@ library LibLeakyBucket {
 
     /// Headroom against `capacity` for a level that has already been evaluated
     /// at the timestamp of interest. The single definition of "what fits",
-    /// shared by `headroomAt`, `fillAt` and `fillableAt` so that the three
-    /// cannot drift apart. They cannot share `headroomAt` itself, because two
-    /// of them already hold the level and would pay a second `levelAt` for it,
-    /// so the shared piece is the saturation rather than the public read.
+    /// shared by `headroomAt` and `fillAt` so that the two cannot drift apart.
+    /// They cannot share `headroomAt` itself, because `fillAt` already holds
+    /// the level and would pay a second `levelAt` for it, so the shared piece
+    /// is the saturation rather than the entry point.
     ///
     /// Saturates at zero, so a level above the capacity reports no room rather
     /// than underflowing to an enormous allowance.
-    ///
-    /// Not free: the legacy optimizer does not inline this, so each of the
-    /// three callers pays one extra internal jump, measured at 22 gas on a
-    /// steady state `fill` of ~8900. That is the price of the three agreeing by
-    /// construction, and it is deliberate.
     /// @param capacity The bucket capacity.
     /// @param levelNow The level as at the timestamp of interest.
     /// @return The amount that fits.
@@ -268,43 +333,14 @@ library LibLeakyBucket {
         return LibSaturatingMath.saturatingSub(capacity, levelNow);
     }
 
-    /// The largest amount that `fillAt` would accept at `timestamp`.
+    /// Fill an unpacked bucket with `amount` at `timestamp`, returning the new
+    /// level. Reverts with `LeakyBucketCapacityExceeded` if `amount` does not
+    /// fit.
     ///
-    /// Saturates at zero, which is what makes lowering `capacity` below a level
-    /// that is already outstanding a safe governance action: headroom reads
-    /// zero, every non zero fill is rejected, and the bucket leaks down under
-    /// the new policy until it fits. No fill is needed to make the new capacity
-    /// bind, and nothing has to be migrated.
-    /// @param level The level recorded at the checkpoint.
-    /// @param checkpoint The timestamp `level` was recorded at, in seconds.
-    /// @param timestamp The timestamp to evaluate the bucket at, in seconds.
-    /// @param capacity The bucket capacity.
-    /// @param leakRate The leak in units per second.
-    /// @return The amount that would fit at `timestamp`.
-    function headroomAt(uint256 level, uint256 checkpoint, uint256 timestamp, uint256 capacity, uint256 leakRate)
-        internal
-        pure
-        returns (uint256)
-    {
-        return headroomFrom(capacity, levelAt(level, checkpoint, timestamp, leakRate));
-    }
-
-    /// Fill the bucket with `amount` at `timestamp`, returning the new level.
-    /// Reverts with `LeakyBucketCapacityExceeded` if `amount` does not fit.
-    ///
-    /// The returned level belongs to `timestamp`, not to `checkpoint`. A caller
-    /// storing it against the old checkpoint would credit the same leak twice
-    /// on the next call and the cap would not hold. Write both back together,
-    /// or use `LibLeakyBucketCheckpoint.fill`, which packs them into one word
-    /// and makes writing one without the other impossible.
-    ///
-    /// The exception is a `timestamp` at or before `checkpoint`, where the
-    /// elapsed time saturates at zero and no leak is credited. The level
-    /// returned then belongs to `checkpoint` as much as to `timestamp`, and it
-    /// is `checkpoint` that must be stored: recording the earlier second lets
-    /// the next read measure an interval that has already been paid for and
-    /// hand out headroom nobody waited for. Store the later of the two. The
-    /// codec does exactly that, which is another reason to reach for it.
+    /// The returned level belongs to `timestamp`, not to `checkpoint`, except
+    /// where `timestamp` is at or behind `checkpoint` and no leak was credited,
+    /// in which case it belongs to `checkpoint`. `fill` is what reconciles that
+    /// with the word it writes back.
     ///
     /// An `amount` of zero is accepted whenever the bucket is at or over
     /// capacity as well as under it, because zero fits in zero headroom. It
@@ -323,7 +359,7 @@ library LibLeakyBucket {
         uint256 capacity,
         uint256 leakRate,
         uint256 amount
-    ) internal pure returns (uint256) {
+    ) private pure returns (uint256) {
         uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);
         uint256 headroom = headroomFrom(capacity, levelNow);
         if (amount > headroom) {
@@ -337,79 +373,229 @@ library LibLeakyBucket {
         }
     }
 
-    /// The earliest timestamp at which `amount` would fit, assuming `capacity`
-    /// and `leakRate` do not change and nothing else fills the bucket in the
-    /// meantime. Returns `timestamp` when the amount already fits.
+    /// Revert unless `capacity` is one this library can enforce, i.e. one that
+    /// fits the packed level field.
     ///
-    /// Returns `type(uint256).max` to mean never: either `amount` is larger
-    /// than `capacity`, so no amount of waiting helps, or `leakRate` is zero,
-    /// so the bucket does not drain at all. The same value comes back when the
-    /// wait is real but the arrival time saturates the word, which is
-    /// indistinguishable from never for any purpose.
+    /// A capacity above `LEAKY_BUCKET_LEVEL_MAX` is not a tighter cap, it is a
+    /// cap the layout cannot represent: the level it permits does not fit the
+    /// word it has to be stored in. Left unchecked, `headroomAt` answers from
+    /// the capacity and reports room that `fill` then refuses, so the two
+    /// disagree at the same inputs and the one documented as "the largest
+    /// amount `fill` would accept" is the one that is wrong. Checking it at
+    /// both entry points makes them agree everywhere they answer at all.
     ///
-    /// There is a fourth way to get that value back, and it is NOT never: at
-    /// `timestamp == type(uint256).max`, an amount that already fits returns
-    /// `timestamp` itself, which is the sentinel. The sentinel is therefore in
-    /// band, and a caller reading `== type(uint256).max` as "never" is wrong at
-    /// exactly that one second. Distinguish the two by asking whether the
-    /// amount fits now — `headroomAt(...) >= amount` — which is the same
-    /// question `fillAt` answers, and is the reason this is documented rather
-    /// than signalled out of band: no clock reaches the top of the word, so
-    /// widening the return to carry a flag would cost every caller a value they
-    /// can already compute for an input none of them has.
+    /// Rejecting rather than clamping is the same choice `pack` makes about
+    /// truncation. A clamp would silently substitute a policy nobody set, and a
+    /// mint cap that quietly enforces a different number than governance wrote
+    /// is worse than one that refuses to run.
+    /// @param capacity The capacity to check.
+    function checkCapacity(uint256 capacity) private pure {
+        if (capacity > LEAKY_BUCKET_LEVEL_MAX) {
+            revert LeakyBucketCapacityOverflow(capacity);
+        }
+    }
+
+    /// Revert unless `timestamp` is a second this library can record.
     ///
-    /// This is a view for callers and frontends. It is not consulted by
-    /// `fillAt` and nothing in the enforcement path depends on it.
-    /// @param level The level recorded at the checkpoint.
-    /// @param checkpoint The timestamp `level` was recorded at, in seconds.
+    /// The mirror of `checkCapacity` on the other packed field, and it exists
+    /// for the same reason. `fill` ends in `pack`, which cannot store a second
+    /// above `LEAKY_BUCKET_TIMESTAMP_MAX`, so a read that answered there would
+    /// be naming an amount that `fill` refuses — the same disagreement between
+    /// a read and a fill that `checkCapacity` exists to remove, on the other
+    /// half of the word.
+    ///
+    /// Refusing rather than answering zero is the same choice again. A clock
+    /// this library cannot represent is a broken clock source rather than a
+    /// bucket that will not fill, and an error naming the second that is wrong
+    /// sends whoever debugs it to the clock instead of leaving them with an
+    /// answer they cannot act on.
+    /// @param timestamp The timestamp to check, in seconds.
+    function checkTimestamp(uint256 timestamp) private pure {
+        if (timestamp > LEAKY_BUCKET_TIMESTAMP_MAX) {
+            revert LeakyBucketTimestampOverflow(timestamp);
+        }
+    }
+
+    /// The one statement of the rule this library rests on: **a read answers
+    /// exactly where `fill` acts.**
+    ///
+    /// `fill` refuses two arguments outright, before any policy question is
+    /// asked, because the word it has to write cannot carry them: a `capacity`
+    /// wider than the level field, and a `timestamp` wider than the timestamp
+    /// field. A read that answered at either would be making a promise `fill`
+    /// breaks, so `headroomAt` refuses them first, here.
+    ///
+    /// Holding the rule in one place rather than repeating the guards at each
+    /// entry point is the point of this function. Enforced pointwise, the rule
+    /// is only as complete as whoever last remembered it — which is how the
+    /// `capacity` half came to be guarded at three call sites while the
+    /// `timestamp` half was guarded at none. A future packed field with a bound
+    /// of its own is added once, here, and every entry point inherits it.
+    ///
+    /// `capacity` is checked first, so a call that is wrong in both ways names
+    /// the policy parameter rather than the clock.
+    /// @param capacity The capacity to check.
+    /// @param timestamp The timestamp to check, in seconds.
+    function checkFillableDomain(uint256 capacity, uint256 timestamp) private pure {
+        checkCapacity(capacity);
+        checkTimestamp(timestamp);
+    }
+
+    /// Pack a level and a timestamp into one word. The layout, in one place.
+    ///
+    /// Neither field is re-checked here, and that is a statement about `fill`
+    /// rather than an omission. `fill` is the only caller and it establishes
+    /// both bounds before it gets here:
+    ///
+    /// - The level. `checkFillableDomain` refuses a `capacity` above
+    ///   `LEAKY_BUCKET_LEVEL_MAX`, `unpack` can only ever produce a level at or
+    ///   below it, and `fillAt` returns at most the larger of that level and
+    ///   the capacity. So the level is at or below `LEAKY_BUCKET_LEVEL_MAX` and
+    ///   the shift cannot truncate it or reach a timestamp bit.
+    /// - The timestamp. `checkFillableDomain` refuses one above
+    ///   `LEAKY_BUCKET_TIMESTAMP_MAX`, and the stored checkpoint it is compared
+    ///   against came out of `unpack`'s mask, so the larger of the two is
+    ///   within the field.
+    ///
+    /// Truncation is still the failure this ordering exists to prevent, and it
+    /// is prevented at the parameter rather than at the word. A time field that
+    /// wrapped would read as a checkpoint far in the past, which is an enormous
+    /// leak, which is a full bucket of headroom that was never earned; a
+    /// wrapped level would read as a far emptier bucket than reality. A cap
+    /// that fails open is worse than one that fails closed, so the capacity and
+    /// the clock are refused up front, by name, where a caller can act on which
+    /// one was wrong.
+    /// @param level The level to pack. At or below `LEAKY_BUCKET_LEVEL_MAX`.
+    /// @param timestamp The timestamp to pack, in seconds. At or below
+    /// `LEAKY_BUCKET_TIMESTAMP_MAX`.
+    /// @return The packed checkpoint.
+    function pack(uint256 level, uint256 timestamp) private pure returns (uint256) {
+        unchecked {
+            return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;
+        }
+    }
+
+    /// Unpack a checkpoint into its level and timestamp. Total over every 256
+    /// bit word, and the exact inverse of `pack` over every packable pair.
+    /// @param checkpoint The packed checkpoint.
+    /// @return level The level recorded at the checkpoint.
+    /// @return timestamp The timestamp the level was recorded at, in seconds.
+    function unpack(uint256 checkpoint) private pure returns (uint256 level, uint256 timestamp) {
+        unchecked {
+            level = checkpoint >> LEAKY_BUCKET_TIMESTAMP_BITS;
+            timestamp = checkpoint & LEAKY_BUCKET_TIMESTAMP_MAX;
+        }
+    }
+
+    /// The largest amount `fill` would accept at `timestamp`. Reverts with
+    /// `LeakyBucketCapacityOverflow` if `capacity` is one this library cannot
+    /// enforce, or `LeakyBucketTimestampOverflow` if `timestamp` is a second it
+    /// cannot record, rather than naming an amount `fill` would refuse. See
+    /// `checkFillableDomain`.
+    ///
+    /// ## Why this is exported at all
+    ///
+    /// It is not here because a caller might like to know, and it is not a view
+    /// for frontends. It is here because **a caller metering one amount through
+    /// several buckets cannot otherwise say which of them refused it.**
+    ///
+    /// `fill` reverts with `LeakyBucketCapacityExceeded(capacity, level,
+    /// amount)`, which names a policy and a state but not a bucket, and two
+    /// buckets can be running the same `capacity`. `fill` is `internal`, so the
+    /// revert cannot be caught and relabelled in the frame that raised it. A
+    /// caller that must attribute the rejection — a token metering every mint
+    /// through a global bucket and a per-minter one, where "which cap bound"
+    /// decides whether an operator raises a limit or revokes a key — therefore
+    /// has to ask before it fills, and this is the question.
+    ///
+    /// The alternative is for the caller to compute headroom itself, which
+    /// means re-deriving the leak, the field widths and the saturation
+    /// directions outside the library that exists to hold them. That is the
+    /// duplication this library is for, so `headroomAt` stays.
+    ///
+    /// What it answers is exactly what `fill` takes: the amount it names always
+    /// fits, one unit more is always rejected, and the two are guarded by the
+    /// same `checkFillableDomain` and computed through the same `headroomFrom`,
+    /// so they agree at every input by construction rather than by two copies
+    /// of the arithmetic staying in step.
+    ///
+    /// It also saturates at zero, which is what makes lowering `capacity` below
+    /// a level that is already outstanding a safe governance action: headroom
+    /// reads zero, every non zero fill is rejected, and the bucket leaks down
+    /// under the new policy until it fits. No fill is needed to make the new
+    /// capacity bind, and nothing has to be migrated.
+    /// @param checkpoint The packed checkpoint.
     /// @param timestamp The timestamp to evaluate the bucket at, in seconds.
     /// @param capacity The bucket capacity.
     /// @param leakRate The leak in units per second.
-    /// @param amount The amount to wait for.
-    /// @return The earliest timestamp `amount` fits at, or `type(uint256).max`.
-    function fillableAt(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        uint256 capacity,
-        uint256 leakRate,
-        uint256 amount
-    ) internal pure returns (uint256) {
-        if (amount > capacity) {
-            return type(uint256).max;
-        }
-        uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);
-        // Literally the test `fillAt` applies, through the same `headroomFrom`,
-        // so the two agree at every input by construction rather than by two
-        // copies of the saturation staying in step. In particular a zero amount
-        // always fits, including when the bucket is already over capacity, and
-        // the answer is now rather than a wait.
-        if (amount <= headroomFrom(capacity, levelNow)) {
-            return timestamp;
-        }
-        // A bucket that does not drain never makes room for an amount that does
-        // not already fit, so this is "never" however far short it is. Tested
-        // before the target is worked out, because it does not depend on the
-        // target: the cheaper and more general answer comes first.
-        if (leakRate == 0) {
-            return type(uint256).max;
-        }
-        uint256 wait;
-        unchecked {
-            // `amount <= capacity` was checked above, so this cannot underflow.
-            uint256 target = capacity - amount;
-            // `levelNow > target` so the deficit is at least one, the ceiling
-            // division below cannot underflow, and the quotient is at most
-            // `deficit - 1` so the increment cannot overflow.
-            uint256 deficit = levelNow - target;
-            wait = (deficit - 1) / leakRate + 1;
-        }
-        // The leak only accrues once the clock passes the checkpoint, so a
-        // `timestamp` behind the checkpoint waits from the checkpoint rather
-        // than from itself. `from >= timestamp`, so the answer is never earlier
-        // than the caller's own clock, and a wait that leaves the word
-        // saturates to the "never" sentinel.
-        uint256 from = timestamp > checkpoint ? timestamp : checkpoint;
-        return LibSaturatingMath.saturatingAdd(from, wait);
+    /// @return The amount that would fit at `timestamp`.
+    function headroomAt(uint256 checkpoint, uint256 timestamp, uint256 capacity, uint256 leakRate)
+        internal
+        pure
+        returns (uint256)
+    {
+        checkFillableDomain(capacity, timestamp);
+        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
+        return headroomFrom(capacity, levelAt(level, checkpointTimestamp, timestamp, leakRate));
+    }
+
+    /// Fill a bucket with `amount` at `timestamp`, returning the new packed
+    /// checkpoint to store. Reverts with `LeakyBucketCapacityExceeded` if the
+    /// amount does not fit, `LeakyBucketCapacityOverflow` if `capacity` is one
+    /// this library cannot enforce, or `LeakyBucketTimestampOverflow` if
+    /// `timestamp` is past the width of the packed field and so cannot be
+    /// recorded. The caller stores nothing in any of the three cases, and that
+    /// list is exhaustive: a `try`/`catch`, or a frontend decoding a failed
+    /// simulation, is written from it.
+    ///
+    /// The third path is reachable from any caller that supplies a time from
+    /// somewhere other than `block.timestamp`, which this library permits and
+    /// the backwards clock tests exercise.
+    ///
+    /// The returned word carries the new level and the timestamp that level
+    /// belongs to, so writing it back is the whole of the state update.
+    ///
+    /// ## The stored timestamp never goes backwards
+    ///
+    /// The word carries the later of `timestamp` and the checkpoint it
+    /// replaces, not `timestamp` itself. The two differ only when the clock is
+    /// behind the stored checkpoint, and then they differ in a direction that
+    /// matters.
+    ///
+    /// `levelAt` saturates the elapsed time at zero, so a backwards clock
+    /// credits no leak and the level computed is the level the bucket has at
+    /// the *checkpoint*, not at `timestamp`. Storing it against `timestamp`
+    /// would therefore be storing a level at a second it does not belong to,
+    /// and the next read would measure its elapsed time from that earlier
+    /// second and credit leak for time that had already passed before this
+    /// fill. The saturation keeps the backwards step from handing out headroom
+    /// on the way in, and a regressed checkpoint hands it out on the way out
+    /// instead: from one zero amount call at a stale clock, a bucket leaking
+    /// one unit a second and checkpointed an hour ago offers an hour of leak
+    /// that nobody waited for.
+    ///
+    /// Keeping the later of the two is exact rather than merely conservative.
+    /// When the clock is behind, no leak was credited, so the level returned is
+    /// precisely the level at the checkpoint, and the checkpoint is precisely
+    /// the second it belongs to. When the clock is ahead, which is every case a
+    /// monotonic `block.timestamp` can produce, this is `timestamp` and nothing
+    /// changes.
+    /// @param checkpoint The packed checkpoint.
+    /// @param timestamp The timestamp to fill at, in seconds.
+    /// @param capacity The bucket capacity.
+    /// @param leakRate The leak in units per second.
+    /// @param amount The amount to fill.
+    /// @return The new packed checkpoint.
+    function fill(uint256 checkpoint, uint256 timestamp, uint256 capacity, uint256 leakRate, uint256 amount)
+        internal
+        pure
+        returns (uint256)
+    {
+        checkFillableDomain(capacity, timestamp);
+        (uint256 level, uint256 checkpointTimestamp) = unpack(checkpoint);
+        return pack(
+            fillAt(level, checkpointTimestamp, timestamp, capacity, leakRate, amount),
+            timestamp > checkpointTimestamp ? timestamp : checkpointTimestamp
+        );
     }
 }
