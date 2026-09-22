@@ -404,4 +404,30 @@ contract LibLeakyBucketCheckpointTest is Test {
         );
         assertLe(newLevel, LEAKY_BUCKET_LEVEL_MAX);
     }
+
+    /// The other half of "a zero word is a valid initial state", asserted
+    /// rather than described because the library now warns about it: the codec
+    /// cannot tell a *cleared* slot from an untouched one, so `delete` on a
+    /// bucket is a full refund of whatever was outstanding rather than cleanup.
+    ///
+    /// A bucket burst to its whole capacity at t=1000 offers nothing at t=1000.
+    /// Cleared, it offers the entire capacity at that same second, with no time
+    /// elapsed in between and nothing in the word to say it was ever used. The
+    /// per-burst bound is per slot, and slots are erasable.
+    function testAClearedSlotIsAFullRefundAtTheSameSecond() external pure {
+        uint256 capacity = 3600e18;
+        uint256 leakRate = 1e18;
+
+        uint256 full = LibLeakyBucketCheckpoint.fill(0, 1000, capacity, leakRate, capacity);
+        assertEq(LibLeakyBucketCheckpoint.headroomAt(full, 1000, capacity, leakRate), 0);
+
+        // `delete sBuckets[minter]` is exactly this: the word becomes zero.
+        uint256 cleared = 0;
+        assertEq(LibLeakyBucketCheckpoint.headroomAt(cleared, 1000, capacity, leakRate), capacity);
+
+        // And it is the same word an untouched slot holds, so no read here can
+        // distinguish the two. The warning is a warning because the codec
+        // cannot enforce it.
+        assertEq(cleared, LibLeakyBucketCheckpoint.pack(0, 0));
+    }
 }

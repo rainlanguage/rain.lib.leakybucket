@@ -96,6 +96,18 @@ error LeakyBucketTimestampOverflow(uint256 timestamp);
 /// has been empty since before the chain existed, which is exactly what it
 /// should be. Concretes that want the opposite, a bucket that starts full,
 /// write `pack(capacity, block.timestamp)` once.
+///
+/// The same identity is a hazard on the way out, and the codec cannot see the
+/// difference: a slot that is *cleared* reads identically to one that was never
+/// used. `delete` on a bucket is not cleanup, it is a full refund of whatever
+/// was outstanding, granted at that instant. A concrete that tidies up after a
+/// revoked minter with `delete sBuckets[minter]`, and later grants that address
+/// the role again, has handed it a fresh `capacity` that no elapsed time paid
+/// for. Re-keying buckets in a storage migration does the same thing. The
+/// per-burst bound this library enforces is per slot, so anything that resets a
+/// slot resets the bound with it: leave a retired bucket where it is (it costs
+/// nothing, and it leaks down on its own), and carry the word across verbatim
+/// when state has to move.
 library LibLeakyBucketCheckpoint {
     /// Revert unless `capacity` is one this codec can enforce, i.e. one that
     /// fits the packed level field.
