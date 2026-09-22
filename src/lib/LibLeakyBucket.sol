@@ -14,6 +14,23 @@ import {LibSaturatingMath} from "rain-math-saturating-0.1.10/src/lib/LibSaturati
 /// @param amount The amount that was offered and did not fit.
 error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amount);
 
+/// @dev Seconds in an hour, a day and a week, for converting a policy written
+/// in human units into the per second `leakRate` this library takes. They are
+/// here rather than left to the caller because that conversion is the one step
+/// of configuring a bucket that nothing on chain can check.
+///
+/// `capacity` and `leakRate` are both bare `uint256` and there is no unit in
+/// the type, so a rate supplied per day rather than per second is 86400 times
+/// too fast and nothing rejects it. The burst still holds, nothing overflows,
+/// `headroomAt` reports a legitimate number and `fillAt` reverts exactly when
+/// it should, so every test and every first fill behaves as expected. What is
+/// gone is the sustained limit: the bucket refills completely between any two
+/// blocks. The opposite mistake, dividing twice, is the safe direction and
+/// merely throttles. Use `leakRatePer` with one of these rather than a literal.
+uint256 constant LEAKY_BUCKET_SECONDS_PER_HOUR = 3600;
+uint256 constant LEAKY_BUCKET_SECONDS_PER_DAY = 86400;
+uint256 constant LEAKY_BUCKET_SECONDS_PER_WEEK = 604800;
+
 /// @title LibLeakyBucket
 /// @notice A leaky bucket as a meter, in the textbook form, as pure functions
 /// over 256 bit words.
@@ -88,19 +105,38 @@ error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amoun
 ///
 /// Every operation that could leave the representable range is a saturating one
 /// from `LibSaturatingMath`, which is audited and carries the same licence as
-/// this library. There is no hand rolled overflow guard here to review. The
-/// saturation directions are chosen so that the failure mode is always a
-/// tighter cap or a drained bucket, never free headroom:
+/// this library. There is no hand rolled overflow guard here to review.
 ///
-/// - The leak saturates the multiply at the top of the word, so an absurd
-///   `elapsed * leakRate` reads as a leak larger than any level rather than
-///   wrapping to a small one. A wrapped product would be free headroom.
-/// - The leak saturates the subtract at zero, so a bucket cannot drain past
-///   empty into a huge level, and cannot underflow.
+/// The property the saturation directions buy is that no read here ever reports
+/// MORE headroom than the bucket really has. Three of the four are exact, in
+/// that the saturated answer IS the true answer rather than an approximation of
+/// it, and the fourth is strictly conservative.
+///
+/// "Saturate rather than wrap" is not itself that property, and reading it as a
+/// rule of thumb is how a fail open gets written here. For the first two below
+/// the wrapping alternative would be the TIGHTER cap and the saturation is the
+/// permissive direction; what makes those two safe is that the saturated value
+/// is exactly right, not the direction it moves in.
+///
+/// - The leak saturates the multiply at the top of the word. Exact: a product
+///   that overflows the word already exceeds every representable `level`, so
+///   the true level is zero and the saturated subtract returns zero. Taken on
+///   its own this moves the permissive way, since a larger leak is a lower
+///   level is more headroom, and it is sound only while "the product
+///   overflowed" implies "the leak exceeds the level". Scaling the product, or
+///   holding the level in fewer than 256 bits while computing the product in
+///   256, breaks that implication and turns this saturation into a free
+///   capacity.
+/// - The leak saturates the subtract at zero. Exact: a bucket stops at empty by
+///   definition, so it cannot drain past empty and cannot underflow into a huge
+///   level.
 /// - Elapsed time saturates at zero, so a clock at or behind the checkpoint
 ///   credits no leak at all rather than wrapping to billions of years of it.
-/// - Headroom saturates at zero, so a level above capacity reports no room
-///   rather than underflowing to an enormous allowance.
+///   Conservative: it reports a level at or above the true one, hence a tighter
+///   cap, and the wrap it replaces would have drained the bucket outright.
+/// - Headroom saturates at zero. Exact: nothing fits in a bucket that is over
+///   its capacity, and the underflow it replaces would be an enormous
+///   allowance.
 ///
 /// ## Leak is credited from the checkpoint, exactly
 ///
@@ -124,9 +160,12 @@ error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amoun
 /// lose and frequency is not observable in the result.
 ///
 /// The cost is that `leakRate` is expressed per second, so a policy written as
-/// "X per day" is `X / 86400` and has to be rounded once, off chain, where the
-/// rounding is visible and deliberate, instead of silently on every call. Round
-/// down when converting, so the on chain rate is never faster than the policy.
+/// "X per day" has to be converted once, and rounded once, instead of silently
+/// on every call. That conversion is `leakRatePer(X, LEAKY_BUCKET_SECONDS_PER_DAY)`
+/// and it lives here, under test, rather than in whatever spreadsheet produced
+/// the number: it is the one parameter of the two whose misconfiguration is
+/// invisible on chain, so it is the one that gets a guard rail. It rounds down,
+/// so the on chain rate is never faster than the policy that was approved.
 library LibLeakyBucket {
     /// Level remaining after leaking for `elapsed` seconds at `leakRate` units
     /// per second. Saturates at zero: a bucket cannot leak past empty.
@@ -142,6 +181,36 @@ library LibLeakyBucket {
     /// @return The level at the end of the interval.
     function leak(uint256 level, uint256 elapsed, uint256 leakRate) internal pure returns (uint256) {
         return LibSaturatingMath.saturatingSub(level, LibSaturatingMath.saturatingMul(elapsed, leakRate));
+    }
+
+    /// The `leakRate` for a policy of `amountPerPeriod` units per `period`
+    /// seconds. Use it with `LEAKY_BUCKET_SECONDS_PER_DAY` and friends:
+    /// `leakRatePer(amountPerDay, LEAKY_BUCKET_SECONDS_PER_DAY)`.
+    ///
+    /// Rounds DOWN, so the on chain rate is never faster than the policy that
+    /// was approved. A whole `period` at the returned rate leaks at most
+    /// `amountPerPeriod`, and falls short of it by fewer than `period` units,
+    /// which is one unit a second of shortfall and the most a rate quantised to
+    /// whole units per second can be out by. The error is always toward the
+    /// tighter cap.
+    ///
+    /// Rounding down can reach zero, for a policy whose period is longer than
+    /// the amount it allows. A zero rate is a bucket that never drains, which
+    /// is one `capacity` and then nothing, forever. That is the conservative
+    /// direction and is left to the caller to notice rather than rejected here,
+    /// since a deliberately non draining bucket is a legitimate policy.
+    ///
+    /// A `period` of zero is a division by zero and panics. There is nothing to
+    /// saturate toward: a rate per no time is not a slower rate or a faster one,
+    /// it is not a rate. Unlike the arguments the rest of this library takes,
+    /// which are bucket state and a clock, this one is a policy being written
+    /// down, so a caller reaching here with zero has a bug rather than an
+    /// awkward input, and a panic is the right answer.
+    /// @param amountPerPeriod The amount the policy allows per period.
+    /// @param period The period in seconds. Zero panics.
+    /// @return The per second leak rate.
+    function leakRatePer(uint256 amountPerPeriod, uint256 period) internal pure returns (uint256) {
+        return amountPerPeriod / period;
     }
 
     /// Level of a bucket checkpointed at `(level, checkpoint)`, as at
@@ -178,6 +247,27 @@ library LibLeakyBucket {
         return leak(level, LibSaturatingMath.saturatingSub(timestamp, checkpoint), leakRate);
     }
 
+    /// Headroom against `capacity` for a level that has already been evaluated
+    /// at the timestamp of interest. The single definition of "what fits",
+    /// shared by `headroomAt`, `fillAt` and `fillableAt` so that the three
+    /// cannot drift apart. They cannot share `headroomAt` itself, because two
+    /// of them already hold the level and would pay a second `levelAt` for it,
+    /// so the shared piece is the saturation rather than the public read.
+    ///
+    /// Saturates at zero, so a level above the capacity reports no room rather
+    /// than underflowing to an enormous allowance.
+    ///
+    /// Not free: the legacy optimizer does not inline this, so each of the
+    /// three callers pays one extra internal jump, measured at 22 gas on a
+    /// steady state `fill` of ~8900. That is the price of the three agreeing by
+    /// construction, and it is deliberate.
+    /// @param capacity The bucket capacity.
+    /// @param levelNow The level as at the timestamp of interest.
+    /// @return The amount that fits.
+    function headroomFrom(uint256 capacity, uint256 levelNow) private pure returns (uint256) {
+        return LibSaturatingMath.saturatingSub(capacity, levelNow);
+    }
+
     /// The largest amount that `fillAt` would accept at `timestamp`.
     ///
     /// Saturates at zero, which is what makes lowering `capacity` below a level
@@ -196,7 +286,7 @@ library LibLeakyBucket {
         pure
         returns (uint256)
     {
-        return LibSaturatingMath.saturatingSub(capacity, levelAt(level, checkpoint, timestamp, leakRate));
+        return headroomFrom(capacity, levelAt(level, checkpoint, timestamp, leakRate));
     }
 
     /// Fill the bucket with `amount` at `timestamp`, returning the new level.
@@ -235,7 +325,7 @@ library LibLeakyBucket {
         uint256 amount
     ) internal pure returns (uint256) {
         uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);
-        uint256 headroom = LibSaturatingMath.saturatingSub(capacity, levelNow);
+        uint256 headroom = headroomFrom(capacity, levelNow);
         if (amount > headroom) {
             revert LeakyBucketCapacityExceeded(capacity, levelNow, amount);
         }
@@ -278,22 +368,25 @@ library LibLeakyBucket {
             return type(uint256).max;
         }
         uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);
-        // Exactly the test `fillAt` applies, so the two agree at every input.
-        // In particular a zero amount always fits, including when the bucket is
-        // already over capacity, and the answer is now rather than a wait.
-        if (amount <= LibSaturatingMath.saturatingSub(capacity, levelNow)) {
+        // Literally the test `fillAt` applies, through the same `headroomFrom`,
+        // so the two agree at every input by construction rather than by two
+        // copies of the saturation staying in step. In particular a zero amount
+        // always fits, including when the bucket is already over capacity, and
+        // the answer is now rather than a wait.
+        if (amount <= headroomFrom(capacity, levelNow)) {
             return timestamp;
         }
-        uint256 target;
-        unchecked {
-            // `amount <= capacity` was checked above, so this cannot underflow.
-            target = capacity - amount;
-        }
+        // A bucket that does not drain never makes room for an amount that does
+        // not already fit, so this is "never" however far short it is. Tested
+        // before the target is worked out, because it does not depend on the
+        // target: the cheaper and more general answer comes first.
         if (leakRate == 0) {
             return type(uint256).max;
         }
         uint256 wait;
         unchecked {
+            // `amount <= capacity` was checked above, so this cannot underflow.
+            uint256 target = capacity - amount;
             // `levelNow > target` so the deficit is at least one, the ceiling
             // division below cannot underflow, and the quotient is at most
             // `deficit - 1` so the increment cannot overflow.

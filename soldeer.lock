@@ -4,3 +4,10 @@ version = "1.16.2"
 url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_16_2_03-07-2026_07:37:45_forge-std-1.16.zip"
 checksum = "405dccc9d60d753f6abc412b4adf0359f4390f65dbadbbb277a12b4946ed8969"
 integrity = "5fb4325b60d7d4194bd0481e2f94398cf1d9c6561dd12a66fb2748ef4a68205f"
+
+[[dependencies]]
+name = "rain-math-saturating"
+version = "0.1.10"
+url = "https://soldeer-revisions.s3.amazonaws.com/rain-math-saturating/0_1_10_06-09-2026_02:56:19_rain.math.zip"
+checksum = "2c0b51ebfec8f0a6896e0a3dc3b251b423c49766641363ef1ad733d660c93d31"
+integrity = "c45986d57624470fd89d5ceaab94f8a1ae575f159a50e21d66eef2eb755bfceb"
