@@ -593,4 +593,25 @@ contract LibLeakyBucketCheckpointTest is Test {
             bytes32(bytes4(keccak256("LeakyBucketTimestampOverflow(uint256)")))
         );
     }
+
+    /// A `timestamp` the packed field cannot hold is refused BY NAME, and
+    /// nothing is stored. Failing closed at an unreachable date is the choice
+    /// `pack` documents, and `fill` inherits it — but `fill`'s own docstring
+    /// enumerated its reverts and omitted this one, so a caller writing a
+    /// `try`/`catch` from that list would not handle it.
+    ///
+    /// The amount is zero, so nothing but the second can be what refuses it:
+    /// a zero fill fits in every bucket, at or over capacity alike.
+    function testFillRevertsOnATimestampItCannotStore(
+        uint192 level,
+        uint64 checkpoint,
+        uint256 timestamp,
+        uint192 capacity,
+        uint256 leakRate
+    ) external {
+        timestamp = bound(timestamp, LEAKY_BUCKET_TIMESTAMP_MAX + 1, type(uint256).max);
+        uint256 packed = LibLeakyBucketCheckpoint.pack(level, checkpoint);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+        this.externalFill(packed, timestamp, capacity, leakRate, 0);
+    }
 }
