@@ -14,6 +14,23 @@ import {LibSaturatingMath} from "rain-math-saturating-0.1.10/src/lib/LibSaturati
 /// @param amount The amount that was offered and did not fit.
 error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amount);
 
+/// @dev Seconds in an hour, a day and a week, for converting a policy written
+/// in human units into the per second `leakRate` this library takes. They are
+/// here rather than left to the caller because that conversion is the one step
+/// of configuring a bucket that nothing on chain can check.
+///
+/// `capacity` and `leakRate` are both bare `uint256` and there is no unit in
+/// the type, so a rate supplied per day rather than per second is 86400 times
+/// too fast and nothing rejects it. The burst still holds, nothing overflows,
+/// `headroomAt` reports a legitimate number and `fillAt` reverts exactly when
+/// it should, so every test and every first fill behaves as expected. What is
+/// gone is the sustained limit: the bucket refills completely between any two
+/// blocks. The opposite mistake, dividing twice, is the safe direction and
+/// merely throttles. Use `leakRatePer` with one of these rather than a literal.
+uint256 constant LEAKY_BUCKET_SECONDS_PER_HOUR = 3600;
+uint256 constant LEAKY_BUCKET_SECONDS_PER_DAY = 86400;
+uint256 constant LEAKY_BUCKET_SECONDS_PER_WEEK = 604800;
+
 /// @title LibLeakyBucket
 /// @notice A leaky bucket as a meter, in the textbook form, as pure functions
 /// over 256 bit words.
@@ -124,9 +141,12 @@ error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amoun
 /// lose and frequency is not observable in the result.
 ///
 /// The cost is that `leakRate` is expressed per second, so a policy written as
-/// "X per day" is `X / 86400` and has to be rounded once, off chain, where the
-/// rounding is visible and deliberate, instead of silently on every call. Round
-/// down when converting, so the on chain rate is never faster than the policy.
+/// "X per day" has to be converted once, and rounded once, instead of silently
+/// on every call. That conversion is `leakRatePer(X, LEAKY_BUCKET_SECONDS_PER_DAY)`
+/// and it lives here, under test, rather than in whatever spreadsheet produced
+/// the number: it is the one parameter of the two whose misconfiguration is
+/// invisible on chain, so it is the one that gets a guard rail. It rounds down,
+/// so the on chain rate is never faster than the policy that was approved.
 library LibLeakyBucket {
     /// Level remaining after leaking for `elapsed` seconds at `leakRate` units
     /// per second. Saturates at zero: a bucket cannot leak past empty.
@@ -142,6 +162,36 @@ library LibLeakyBucket {
     /// @return The level at the end of the interval.
     function leak(uint256 level, uint256 elapsed, uint256 leakRate) internal pure returns (uint256) {
         return LibSaturatingMath.saturatingSub(level, LibSaturatingMath.saturatingMul(elapsed, leakRate));
+    }
+
+    /// The `leakRate` for a policy of `amountPerPeriod` units per `period`
+    /// seconds. Use it with `LEAKY_BUCKET_SECONDS_PER_DAY` and friends:
+    /// `leakRatePer(amountPerDay, LEAKY_BUCKET_SECONDS_PER_DAY)`.
+    ///
+    /// Rounds DOWN, so the on chain rate is never faster than the policy that
+    /// was approved. A whole `period` at the returned rate leaks at most
+    /// `amountPerPeriod`, and falls short of it by fewer than `period` units,
+    /// which is one unit a second of shortfall and the most a rate quantised to
+    /// whole units per second can be out by. The error is always toward the
+    /// tighter cap.
+    ///
+    /// Rounding down can reach zero, for a policy whose period is longer than
+    /// the amount it allows. A zero rate is a bucket that never drains, which
+    /// is one `capacity` and then nothing, forever. That is the conservative
+    /// direction and is left to the caller to notice rather than rejected here,
+    /// since a deliberately non draining bucket is a legitimate policy.
+    ///
+    /// A `period` of zero is a division by zero and panics. There is nothing to
+    /// saturate toward: a rate per no time is not a slower rate or a faster one,
+    /// it is not a rate. Unlike the arguments the rest of this library takes,
+    /// which are bucket state and a clock, this one is a policy being written
+    /// down, so a caller reaching here with zero has a bug rather than an
+    /// awkward input, and a panic is the right answer.
+    /// @param amountPerPeriod The amount the policy allows per period.
+    /// @param period The period in seconds. Zero panics.
+    /// @return The per second leak rate.
+    function leakRatePer(uint256 amountPerPeriod, uint256 period) internal pure returns (uint256) {
+        return amountPerPeriod / period;
     }
 
     /// Level of a bucket checkpointed at `(level, checkpoint)`, as at
