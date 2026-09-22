@@ -3,7 +3,7 @@
 A leaky bucket rate limiter for Solidity, over a struct the caller stores.
 
 Built for capping mints on a token, which is security critical and on the hot
-path of every mint, so the whole library is one file exporting one struct, two
+path of every mint, so the whole library is one file exporting one struct, four
 `internal` functions over it and one constant, with no storage, no owner and no
 governance of its own.
 

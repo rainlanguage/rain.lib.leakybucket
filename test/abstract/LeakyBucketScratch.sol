@@ -57,4 +57,9 @@ abstract contract LeakyBucketScratch {
     {
         return headroomAt(checkpoint, timestamp, capacity, leakRate);
     }
+
+    /// `pack` across an external boundary, for `expectRevert`.
+    function externalPack(uint256 level, uint256 timestamp) external pure returns (uint256) {
+        return LibLeakyBucket.pack(level, timestamp);
+    }
 }

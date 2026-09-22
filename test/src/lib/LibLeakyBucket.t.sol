@@ -9,6 +9,7 @@ import {
     LeakyBucket,
     LeakyBucketCapacityExceeded,
     LeakyBucketCapacityOverflow,
+    LeakyBucketLevelOverflow,
     LeakyBucketTimestampOverflow
 } from "../../../src/lib/LibLeakyBucket.sol";
 import {LibLeakyBucketSlow} from "../../lib/LibLeakyBucketSlow.sol";
@@ -566,5 +567,29 @@ contract LibLeakyBucketTest is Test, LeakyBucketScratch {
             bytes32(LeakyBucketTimestampOverflow.selector),
             bytes32(bytes4(keccak256("LeakyBucketTimestampOverflow(uint256)")))
         );
+    }
+
+    /// `pack` and `unpack` are inverses over every storable pair, and agree
+    /// with the layout restated in `LibCheckpointWord`.
+    function testPackUnpackRoundTrip(uint192 level, uint64 timestamp) external pure {
+        uint256 word = LibLeakyBucket.pack(level, timestamp);
+        assertEq(word, LibCheckpointWord.packed(level, timestamp));
+        (uint256 unpackedLevel, uint256 unpackedTimestamp) = LibLeakyBucket.unpack(word);
+        assertEq(unpackedLevel, level);
+        assertEq(unpackedTimestamp, timestamp);
+    }
+
+    /// A level wider than its field is refused by name, not truncated.
+    function testPackRevertsOnAWideLevel(uint256 level, uint64 timestamp) external {
+        level = bound(level, uint256(type(uint192).max) + 1, type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketLevelOverflow.selector, level));
+        this.externalPack(level, timestamp);
+    }
+
+    /// A timestamp wider than its field is refused by name, not truncated.
+    function testPackRevertsOnAWideTimestamp(uint192 level, uint256 timestamp) external {
+        timestamp = bound(timestamp, uint256(type(uint64).max) + 1, type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
+        this.externalPack(level, timestamp);
     }
 }

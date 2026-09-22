@@ -103,7 +103,9 @@ library LibLeakyBucket {
         checkTimestamp(timestamp);
     }
 
-    function pack(uint256 level, uint256 timestamp) private pure returns (uint256) {
+    /// `(level << 64) | timestamp`. Reverts with `LeakyBucketLevelOverflow` or
+    /// `LeakyBucketTimestampOverflow` if a field does not fit.
+    function pack(uint256 level, uint256 timestamp) internal pure returns (uint256) {
         if (level > LEAKY_BUCKET_LEVEL_MAX) {
             revert LeakyBucketLevelOverflow(level);
         }
@@ -117,7 +119,8 @@ library LibLeakyBucket {
         return a > b ? a : b;
     }
 
-    function unpack(uint256 checkpoint) private pure returns (uint256 level, uint256 timestamp) {
+    /// The two fields of a packed checkpoint.
+    function unpack(uint256 checkpoint) internal pure returns (uint256 level, uint256 timestamp) {
         unchecked {
             level = checkpoint >> LEAKY_BUCKET_TIMESTAMP_BITS;
             timestamp = checkpoint & LEAKY_BUCKET_TIMESTAMP_MAX;
