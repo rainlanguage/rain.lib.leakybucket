@@ -3,7 +3,7 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
-import {LeakyBucketMintCap} from "../../lib/LeakyBucketMintCap.sol";
+import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
 import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
 import {LeakyBucketCapacityOverflow, LEAKY_BUCKET_LEVEL_MAX} from "../../../src/lib/LibLeakyBucketCheckpoint.sol";
 

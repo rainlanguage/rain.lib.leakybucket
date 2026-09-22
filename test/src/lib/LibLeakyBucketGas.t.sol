@@ -3,8 +3,8 @@
 pragma solidity =0.8.25;
 
 import {Test, console2} from "forge-std-1.16.2/src/Test.sol";
-import {PackedBucket} from "../../lib/PackedBucket.sol";
-import {UnpackedBucket} from "../../lib/UnpackedBucket.sol";
+import {PackedBucket} from "../../concrete/PackedBucket.sol";
+import {UnpackedBucket} from "../../concrete/UnpackedBucket.sol";
 
 /// Each band asserted here is a `gasleft()` delta in the regime the test name
 /// gives. A compiler or EVM change that moves a measurement out of its band
