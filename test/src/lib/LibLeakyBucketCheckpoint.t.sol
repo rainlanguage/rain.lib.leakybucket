@@ -73,12 +73,26 @@ contract LibLeakyBucketCheckpointTest is Test {
     }
 
     /// The fields do not bleed into each other. Changing one across its whole
-    /// range never moves the other.
-    function testFieldsDoNotAlias(uint192 level, uint64 timestamp, uint192 otherLevel) external pure {
+    /// range never moves the other — both directions, which is what the claim
+    /// says and what a packing bug needs.
+    function testFieldsDoNotAlias(uint192 level, uint64 timestamp, uint192 otherLevel, uint64 otherTimestamp)
+        external
+        pure
+    {
+        // Moving the level across its whole range never moves the timestamp.
         (, uint256 timestampA) = LibLeakyBucketCheckpoint.unpack(LibLeakyBucketCheckpoint.pack(level, timestamp));
         (, uint256 timestampB) = LibLeakyBucketCheckpoint.unpack(LibLeakyBucketCheckpoint.pack(otherLevel, timestamp));
         assertEq(timestampA, timestampB);
         assertEq(timestampA, timestamp);
+
+        // And moving the timestamp across its whole range never moves the
+        // level. This is the direction a wrong unpack mask breaks: the
+        // timestamp is in the low bits, so its overspill lands in the level,
+        // which is a bucket reading fuller or emptier than it is.
+        (uint256 levelA,) = LibLeakyBucketCheckpoint.unpack(LibLeakyBucketCheckpoint.pack(level, timestamp));
+        (uint256 levelB,) = LibLeakyBucketCheckpoint.unpack(LibLeakyBucketCheckpoint.pack(level, otherTimestamp));
+        assertEq(levelA, levelB);
+        assertEq(levelA, level);
     }
 
     /// A zero word is an empty bucket checkpointed at the epoch, so an
