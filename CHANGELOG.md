@@ -42,9 +42,11 @@ the capacity, otherwise record it.
   your own constructor, in your own units.
 - **Removed:** `fillableAt`, at both layers. It forecasts; it does not rate
   limit.
-- **Removed:** the packed `levelAt`. `headroomAt(word, t, LEAKY_BUCKET_LEVEL_MAX,
-  rate)` is `LEAKY_BUCKET_LEVEL_MAX - level` exactly, so anyone holding the word
-  already has it.
+- **Removed:** the packed `levelAt`.
+  `headroomAt(word, t, LEAKY_BUCKET_LEVEL_MAX,
+  rate)` is
+  `LEAKY_BUCKET_LEVEL_MAX - level` exactly, so anyone holding the word already
+  has it.
 - **Kept:** `headroomAt`. `fill` reverts naming a capacity, not a bucket; two
   buckets can share a capacity; and an `internal` revert cannot be caught and
   relabelled in the frame that raised it. A caller metering one amount through

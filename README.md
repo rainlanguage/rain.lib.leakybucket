@@ -3,9 +3,10 @@
 A leaky bucket rate limiter for Solidity, as pure functions.
 
 Built for capping mints on a token, which is security critical and on the hot
-path of every mint, so the whole library is one file exporting two `internal
-pure` functions and one constant, with no storage, no owner and no governance of
-its own.
+path of every mint, so the whole library is one file exporting two
+`internal
+pure` functions and one constant, with no storage, no owner and no
+governance of its own.
 
 ## The model
 
@@ -168,10 +169,11 @@ construction. Neither answers at all for a `capacity` above
 because any answer there would be a promise `fill` breaks.
 
 The level a bucket is carrying is not a second read, because it does not need to
-be: `headroomAt` against `LEAKY_BUCKET_LEVEL_MAX` is `LEAKY_BUCKET_LEVEL_MAX -
-level` exactly — a level out of a stored word can never exceed that bound, so
-the saturation never bites and the subtraction inverts it. Anyone holding the
-word can already compute it.
+be: `headroomAt` against `LEAKY_BUCKET_LEVEL_MAX` is
+`LEAKY_BUCKET_LEVEL_MAX -
+level` exactly — a level out of a stored word can
+never exceed that bound, so the saturation never bites and the subtraction
+inverts it. Anyone holding the word can already compute it.
 
 ## Design notes
 
@@ -194,10 +196,10 @@ levelAt(fill(bucket, t1, capacity, rate, 0), t2) == levelAt(bucket, t2)
 
 for any `t0 <= t1 <= t2`, where `bucket` is checkpointed at `t0` and a zero
 amount fill is a checkpoint and nothing else. Exactly, at every input, with no
-rounding slack. It is
-fuzzed over the unbounded input space, and it is also checked end to end through
-storage: a half hour taken in one step lands on the same level as the same half
-hour taken a second at a time with a write every second.
+rounding slack. It is fuzzed over the unbounded input space, and it is also
+checked end to end through storage: a half hour taken in one step lands on the
+same level as the same half hour taken a second at a time with a write every
+second.
 
 This is worth stating because the usual alternative does not have it.
 Implementations that store a `window` and leak at `capacity / window` per second
@@ -287,8 +289,8 @@ A fill is one `SLOAD` and one `SSTORE`, which is the point of packing the level
 and the checkpoint into one word.
 
 `test/src/lib/LibLeakyBucketGas.t.sol` logs the current figures and asserts a
-coarse band around each. Run it for the numbers. They are not reproduced here:
-a gas figure does not survive a change of optimizer settings, compiler or EVM
+coarse band around each. Run it for the numbers. They are not reproduced here: a
+gas figure does not survive a change of optimizer settings, compiler or EVM
 version, so a table of them in a README is wrong as soon as any of those moves
 and nothing makes it fail when it does.
 
