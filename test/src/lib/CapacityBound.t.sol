@@ -5,6 +5,7 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {LibLeakyBucket, LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
 import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
+import {LeakyBucketExternal} from "../../abstract/LeakyBucketExternal.sol";
 
 /// What `capacity` does and does not bound.
 ///
@@ -16,7 +17,7 @@ import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedP
 /// is cumulative throughput over time, because a leak that did not let more
 /// through over time would not be a leak. Both halves are asserted here so
 /// neither can be changed silently.
-contract CapacityBoundTest is Test {
+contract CapacityBoundTest is Test, LeakyBucketExternal {
     /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`:
     /// a 3600 unit burst draining at one unit per second, so a full bucket
     /// empties in exactly an hour. `DRAIN` is the quotient of the other two
@@ -25,18 +26,6 @@ contract CapacityBoundTest is Test {
     uint256 internal constant CAPACITY = WORKED_CAPACITY;
     uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
     uint256 internal constant DRAIN = WORKED_DRAIN;
-
-    /// `expectRevert` needs an external call boundary.
-    function externalFillAt(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        uint256 capacity,
-        uint256 leakRate,
-        uint256 amount
-    ) external pure returns (uint256) {
-        return LibLeakyBucket.fillAt(level, checkpoint, timestamp, capacity, leakRate, amount);
-    }
 
     /// Idling accrues NO credit beyond the capacity: however long a bucket sits
     /// untouched, the most it can ever offer is one full capacity, and there is
