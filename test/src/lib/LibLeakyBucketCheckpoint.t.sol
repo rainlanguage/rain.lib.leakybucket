@@ -385,10 +385,17 @@ contract LibLeakyBucketCheckpointTest is Test {
         this.externalFill(0, 0, capacity, 0, headroom + 1);
     }
 
-    /// Whatever `headroomAt` reports is a fill the codec takes, at every input
-    /// it will answer at all. The claim is the NatSpec's own words — "the
-    /// largest amount `fill` would accept" — and the half that failed was
-    /// acceptance, not rejection, so acceptance is what is fuzzed here.
+    /// Whatever `headroomAt` reports is a fill the codec takes IN FULL, at
+    /// every input it will answer at all. The claim is the NatSpec's own words
+    /// — "the largest amount `fill` would accept" — and the half that failed
+    /// was acceptance, not rejection, so acceptance is what is fuzzed here.
+    ///
+    /// Acceptance means the level moved by exactly the amount reported. Only
+    /// checking that `fill` did not revert leaves a `fill` that took the
+    /// amount and then stored the old level passing unchanged: the unpacked
+    /// level is `checkpoint >> 64` for every word in existence, so bounding it
+    /// by `LEAKY_BUCKET_LEVEL_MAX` is a tautology and asserts nothing about
+    /// what the codec did.
     function testHeadroomAtIsAlwaysFillable(
         uint192 level,
         uint64 checkpoint,
@@ -397,11 +404,17 @@ contract LibLeakyBucketCheckpointTest is Test {
         uint256 leakRate
     ) external pure {
         uint256 packed = LibLeakyBucketCheckpoint.pack(level, checkpoint);
+        uint256 levelNow = LibLeakyBucketCheckpoint.levelAt(packed, timestamp, leakRate);
         uint256 headroom = LibLeakyBucketCheckpoint.headroomAt(packed, timestamp, capacity, leakRate);
 
         (uint256 newLevel,) = LibLeakyBucketCheckpoint.unpack(
             LibLeakyBucketCheckpoint.fill(packed, timestamp, capacity, leakRate, headroom)
         );
-        assertLe(newLevel, LEAKY_BUCKET_LEVEL_MAX);
+
+        // The fill was taken in full, not silently dropped or clamped.
+        assertEq(newLevel, levelNow + headroom);
+        // And it lands exactly at the capacity, unless the bucket was already
+        // above it, in which case the only headroom on offer was zero.
+        assertEq(newLevel, levelNow > capacity ? levelNow : capacity);
     }
 }
