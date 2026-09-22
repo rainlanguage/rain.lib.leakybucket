@@ -5,6 +5,7 @@ pragma solidity =0.8.25;
 import {Test, console2} from "forge-std-1.16.2/src/Test.sol";
 import {PackedBucket} from "../../concrete/PackedBucket.sol";
 import {UnpackedBucket} from "../../concrete/UnpackedBucket.sol";
+import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
 import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
 
 /// Each band asserted here is a `gasleft()` delta in the regime the test name
@@ -27,6 +28,14 @@ contract LibLeakyBucketGasTest is Test {
     PackedBucket internal packed;
     UnpackedBucket internal unpacked;
 
+    /// `PackedBucket`'s only slot as `setUp` left it, for the rejected fill
+    /// below to compare against. Taken here and not in the test body because
+    /// reading the slot immediately before the measured call warms both the
+    /// account and the slot and measures a different regime entirely: 8,188
+    /// gas becomes 1,688. `setUp` is a separate call, the access list resets
+    /// between it and a test body, and the measurement is 8,188 either way.
+    bytes32 internal sPackedSlotAtSetUp;
+
     function setUp() external {
         packed = new PackedBucket();
         unpacked = new UnpackedBucket();
@@ -38,6 +47,7 @@ contract LibLeakyBucketGasTest is Test {
         packed.fill(CAPACITY, LEAK_RATE, 1e18);
         unpacked.fill(CAPACITY, LEAK_RATE, 1e18);
         vm.warp(block.timestamp + DRAIN / 6);
+        sPackedSlotAtSetUp = vm.load(address(packed), bytes32(uint256(0)));
     }
 
     function measure(address target, uint256 amount) internal returns (uint256) {
@@ -126,14 +136,34 @@ contract LibLeakyBucketGasTest is Test {
         assertGt(unpackedGas - packedGas, 20_000);
     }
 
-    /// A rejected fill costs the read and the revert, and writes nothing.
+    /// A rejected fill costs the read and the revert, and writes nothing. The
+    /// band belongs to a capacity rejection specifically, so the rejection is
+    /// identified before the gas is banded, and the "writes nothing" half is a
+    /// state claim rather than a gas claim so it is asserted as one.
     function testGasRejectedFill() external {
         bytes memory call =
             abi.encodeWithSignature("fill(uint256,uint256,uint256)", CAPACITY, LEAK_RATE, type(uint256).max);
         uint256 before = gasleft();
-        (bool ok,) = address(packed).call(call);
+        (bool ok, bytes memory reason) = address(packed).call(call);
         uint256 gas = before - gasleft();
+
+        // Which revert, not just "reverted". `setUp` primed the bucket with
+        // 1e18 and moved the clock on `DRAIN / 6` = 600 seconds, and 600e18 of
+        // leak against 1e18 of level leaves it empty, so the level the error
+        // reports is zero. Copying the reason does land inside the measured
+        // window; it moves the measurement by 57 gas, 8,188 to 8,131, which is
+        // nothing against a band 4,000 wide.
         assertTrue(!ok);
+        assertEq(reason, abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, 0, type(uint256).max));
+
+        // The other half of the claim. The band is only indirect evidence for
+        // it: a figure under 10,000 rules out a fresh `SSTORE` but not a warm
+        // rewrite of the same slot at 100 gas, so a codec that wrote before
+        // reverting, or a concrete that swallowed the revert after storing,
+        // would sit inside the band. `sCheckpoint` is `PackedBucket`'s only
+        // state variable, so it is slot 0.
+        assertEq(vm.load(address(packed), bytes32(uint256(0))), sPackedSlotAtSetUp);
+
         console2.log("packed rejected fill", gas);
         assertGt(gas, 6_000);
         assertLt(gas, 10_000);
