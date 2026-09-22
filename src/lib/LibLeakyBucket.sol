@@ -88,19 +88,38 @@ error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amoun
 ///
 /// Every operation that could leave the representable range is a saturating one
 /// from `LibSaturatingMath`, which is audited and carries the same licence as
-/// this library. There is no hand rolled overflow guard here to review. The
-/// saturation directions are chosen so that the failure mode is always a
-/// tighter cap or a drained bucket, never free headroom:
+/// this library. There is no hand rolled overflow guard here to review.
 ///
-/// - The leak saturates the multiply at the top of the word, so an absurd
-///   `elapsed * leakRate` reads as a leak larger than any level rather than
-///   wrapping to a small one. A wrapped product would be free headroom.
-/// - The leak saturates the subtract at zero, so a bucket cannot drain past
-///   empty into a huge level, and cannot underflow.
+/// The property the saturation directions buy is that no read here ever reports
+/// MORE headroom than the bucket really has. Three of the four are exact, in
+/// that the saturated answer IS the true answer rather than an approximation of
+/// it, and the fourth is strictly conservative.
+///
+/// "Saturate rather than wrap" is not itself that property, and reading it as a
+/// rule of thumb is how a fail open gets written here. For the first two below
+/// the wrapping alternative would be the TIGHTER cap and the saturation is the
+/// permissive direction; what makes those two safe is that the saturated value
+/// is exactly right, not the direction it moves in.
+///
+/// - The leak saturates the multiply at the top of the word. Exact: a product
+///   that overflows the word already exceeds every representable `level`, so
+///   the true level is zero and the saturated subtract returns zero. Taken on
+///   its own this moves the permissive way, since a larger leak is a lower
+///   level is more headroom, and it is sound only while "the product
+///   overflowed" implies "the leak exceeds the level". Scaling the product, or
+///   holding the level in fewer than 256 bits while computing the product in
+///   256, breaks that implication and turns this saturation into a free
+///   capacity.
+/// - The leak saturates the subtract at zero. Exact: a bucket stops at empty by
+///   definition, so it cannot drain past empty and cannot underflow into a huge
+///   level.
 /// - Elapsed time saturates at zero, so a clock at or behind the checkpoint
 ///   credits no leak at all rather than wrapping to billions of years of it.
-/// - Headroom saturates at zero, so a level above capacity reports no room
-///   rather than underflowing to an enormous allowance.
+///   Conservative: it reports a level at or above the true one, hence a tighter
+///   cap, and the wrap it replaces would have drained the bucket outright.
+/// - Headroom saturates at zero. Exact: nothing fits in a bucket that is over
+///   its capacity, and the underflow it replaces would be an enormous
+///   allowance.
 ///
 /// ## Leak is credited from the checkpoint, exactly
 ///
