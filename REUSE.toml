@@ -8,6 +8,7 @@ path = [
   "CLAUDE.md",
   ".gitignore",
   "README.md",
+  "CHANGELOG.md",
   "flake.lock",
   "flake.nix",
   "foundry.toml",
