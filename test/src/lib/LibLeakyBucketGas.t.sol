@@ -5,6 +5,7 @@ pragma solidity =0.8.25;
 import {Test, console2} from "forge-std-1.16.2/src/Test.sol";
 import {PackedBucket} from "../../concrete/PackedBucket.sol";
 import {UnpackedBucket} from "../../concrete/UnpackedBucket.sol";
+import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
 
 /// Each band asserted here is a `gasleft()` delta in the regime the test name
 /// gives. A compiler or EVM change that moves a measurement out of its band
@@ -18,8 +19,10 @@ import {UnpackedBucket} from "../../concrete/UnpackedBucket.sol";
 /// the measurement starts, exactly as they are for a mint in a fresh
 /// transaction.
 contract LibLeakyBucketGasTest is Test {
-    uint256 internal constant CAPACITY = 3600e18;
-    uint256 internal constant LEAK_RATE = 1e18;
+    /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`.
+    uint256 internal constant CAPACITY = WORKED_CAPACITY;
+    uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
+    uint256 internal constant DRAIN = WORKED_DRAIN;
 
     PackedBucket internal packed;
     UnpackedBucket internal unpacked;
@@ -29,10 +32,12 @@ contract LibLeakyBucketGasTest is Test {
         unpacked = new UnpackedBucket();
         vm.warp(1_700_000_000);
         // Prime both so the measured fills hit non zero slots, then move the
-        // clock on so there is a real leak to apply.
+        // clock on by a sixth of a drain time, which is far more leak than the
+        // unit primed above, so every measured fill below starts from an empty
+        // bucket with a real leak to apply.
         packed.fill(CAPACITY, LEAK_RATE, 1e18);
         unpacked.fill(CAPACITY, LEAK_RATE, 1e18);
-        vm.warp(block.timestamp + 600);
+        vm.warp(block.timestamp + DRAIN / 6);
     }
 
     function measure(address target, uint256 amount) internal returns (uint256) {

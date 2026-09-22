@@ -6,6 +6,7 @@ import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
 import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
 import {LeakyBucketCapacityOverflow, LEAKY_BUCKET_LEVEL_MAX} from "../../../src/lib/LibLeakyBucketCheckpoint.sol";
+import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
 
 /// The library under a real storage layout and a real clock, which is where the
 /// mistakes that pure function tests cannot see would show up: state written
@@ -17,11 +18,15 @@ contract LeakyBucketEmbeddingTest is Test {
     address internal constant ALICE = address(uint160(uint256(keccak256("alice"))));
     address internal constant BOB = address(uint160(uint256(keccak256("bob"))));
 
-    /// A 3600 unit burst.
-    uint256 internal constant CAPACITY = 3600e18;
-    /// One unit per second sustained, so a full bucket drains in exactly an
-    /// hour and every assertion below is exact integer arithmetic.
-    uint256 internal constant LEAK_RATE = 1e18;
+    /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`:
+    /// a 3600 unit burst at one unit per second sustained, so a full bucket
+    /// drains in exactly `DRAIN` seconds and every assertion below is exact
+    /// integer arithmetic. `DRAIN` is the quotient of the other two rather than
+    /// a restated literal, and the waits below are written over it so each one
+    /// says what fraction of a drain it is.
+    uint256 internal constant CAPACITY = WORKED_CAPACITY;
+    uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
+    uint256 internal constant DRAIN = WORKED_DRAIN;
 
     function setUp() external {
         cap = new LeakyBucketMintCap();
@@ -75,7 +80,7 @@ contract LeakyBucketEmbeddingTest is Test {
         assertEq(cap.level(ALICE), CAPACITY);
 
         // Half the drain time, taken in one step.
-        vm.warp(block.timestamp + 1800);
+        vm.warp(block.timestamp + DRAIN / 2);
         assertEq(cap.level(ALICE), CAPACITY / 2);
 
         // The same half hour, taken a second at a time with a checkpoint every
@@ -85,7 +90,7 @@ contract LeakyBucketEmbeddingTest is Test {
         vm.warp(1_700_000_000);
         vm.prank(BOB);
         other.mint(CAPACITY);
-        for (uint256 i = 0; i < 1800; i++) {
+        for (uint256 i = 0; i < DRAIN / 2; i++) {
             vm.warp(block.timestamp + 1);
             vm.prank(BOB);
             other.mint(0);
@@ -133,13 +138,13 @@ contract LeakyBucketEmbeddingTest is Test {
         vm.prank(ALICE);
         cap.mint(CAPACITY);
 
-        vm.warp(block.timestamp + 900);
+        vm.warp(block.timestamp + DRAIN / 4);
         assertEq(cap.headroom(ALICE), CAPACITY / 4);
 
-        vm.warp(block.timestamp + 900);
+        vm.warp(block.timestamp + DRAIN / 4);
         assertEq(cap.headroom(ALICE), CAPACITY / 2);
 
-        vm.warp(block.timestamp + 1800);
+        vm.warp(block.timestamp + DRAIN / 2);
         assertEq(cap.headroom(ALICE), CAPACITY);
 
         // And it stops at full rather than accruing credit for idle time.
@@ -152,7 +157,7 @@ contract LeakyBucketEmbeddingTest is Test {
     function testCapacityCutBindsImmediately() external {
         vm.prank(ALICE);
         cap.mint(CAPACITY);
-        vm.warp(block.timestamp + 1800);
+        vm.warp(block.timestamp + DRAIN / 2);
         assertEq(cap.headroom(ALICE), CAPACITY / 2);
 
         // Timelock executes: burst cut to a tenth.
@@ -167,8 +172,10 @@ contract LeakyBucketEmbeddingTest is Test {
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY / 10, CAPACITY / 2, 1));
         cap.mint(1);
 
-        // It drains under the new policy without intervention.
-        vm.warp(block.timestamp + 1620);
+        // It drains under the new policy without intervention. The wait is the
+        // time it takes the outstanding level to fall from half the old
+        // capacity to a twentieth of it, which is the new capacity's half.
+        vm.warp(block.timestamp + DRAIN / 2 - DRAIN / 20);
         assertEq(cap.level(ALICE), CAPACITY / 20);
         assertEq(cap.headroom(ALICE), CAPACITY / 20);
     }
@@ -179,7 +186,7 @@ contract LeakyBucketEmbeddingTest is Test {
         cap.mint(CAPACITY);
 
         uint256 at = cap.fillableAt(ALICE, CAPACITY / 2);
-        assertEq(at, block.timestamp + 1800);
+        assertEq(at, block.timestamp + DRAIN / 2);
 
         vm.warp(at - 1);
         vm.prank(ALICE);
@@ -236,7 +243,7 @@ contract LeakyBucketEmbeddingTest is Test {
         uint256 filled = block.timestamp;
 
         // The clock falls back an hour and ALICE mints nothing at all.
-        vm.warp(filled - 3600);
+        vm.warp(filled - DRAIN);
         vm.prank(ALICE);
         cap.mint(0);
 
@@ -249,7 +256,7 @@ contract LeakyBucketEmbeddingTest is Test {
         assertEq(cap.headroom(ALICE), 0);
 
         // And one real hour later it is one capacity, not two hours of leak.
-        vm.warp(filled + 3600);
+        vm.warp(filled + DRAIN);
         assertEq(cap.headroom(ALICE), CAPACITY);
         vm.prank(ALICE);
         cap.mint(CAPACITY);
