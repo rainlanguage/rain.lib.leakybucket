@@ -796,6 +796,9 @@ contract LibLeakyBucketTest is Test, LeakyBucketScratch {
         this.externalHeadroomAt(float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate));
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        this.externalLevelAt(float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
         this.externalFill(
             float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate), float(amount)
         );
@@ -825,6 +828,9 @@ contract LibLeakyBucketTest is Test, LeakyBucketScratch {
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
         this.externalHeadroomAt(float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat);
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+        this.externalLevelAt(float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat);
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
         this.externalFill(

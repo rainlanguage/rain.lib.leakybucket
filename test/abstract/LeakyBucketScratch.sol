@@ -75,4 +75,16 @@ abstract contract LeakyBucketScratch {
     {
         return headroomAt(level, checkpoint, timestamp, capacity, leakRate);
     }
+
+    /// The library's own `levelAt` across an external boundary, for
+    /// `expectRevert`. Distinct from the derived `levelAt` above, which reads
+    /// through a headroom: this one is the export, and it carries its own domain
+    /// check.
+    function externalLevelAt(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate)
+        external
+        pure
+        returns (Float)
+    {
+        return LibLeakyBucket.levelAt(bucket(level, checkpoint, capacity, leakRate), timestamp);
+    }
 }
