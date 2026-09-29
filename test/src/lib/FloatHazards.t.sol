@@ -42,7 +42,7 @@ contract FloatHazardsTest is Test {
 
     /// The same claim across a range of gaps, so the boundary is found rather
     /// than assumed to be beyond one hand-picked pair.
-    function testFillsAcrossExponentGapsEitherLandOrRevert(uint8 gap) external {
+    function testFillsAcrossExponentGapsEitherLandOrRevert(uint8 gap) external view {
         int256 exponent = -int256(uint256(bound(gap, 0, 80)));
         Float level = f(1, 40);
         LeakyBucket memory bucket = bucketOf(level, f(1, 60));
@@ -73,7 +73,7 @@ contract FloatHazardsTest is Test {
     /// And the same for the capacity and the leak rate: a non-canonical zero
     /// capacity is a capacity of zero, which admits nothing rather than
     /// everything.
-    function testANonCanonicalZeroCapacityAdmitsNothing() external view {
+    function testANonCanonicalZeroCapacityAdmitsNothing() external pure {
         Float weirdZero = Float.wrap(bytes32(uint256(5) << 224));
         LeakyBucket memory bucket = bucketOf(f(0, 0), weirdZero);
         assertTrue(LibLeakyBucket.headroomAt(bucket, f(0, 0)).isZero());
