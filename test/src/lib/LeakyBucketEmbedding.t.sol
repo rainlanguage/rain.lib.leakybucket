@@ -223,13 +223,14 @@ contract LeakyBucketEmbeddingTest is Test {
         // The outstanding level is still half the old capacity, which is five
         // times the new capacity, so nothing fits.
         //
-        // The level is read off the refusal rather than from `sCap.level`. The
-        // harness derives its level as `capacity - headroom`, and a cut is the
-        // one case where the level is ABOVE the capacity, so that subtraction
-        // clamps and the harness reports the new capacity instead of the
-        // outstanding level. The library's own error carries the level it
-        // actually measured, which is the number this test is about.
+        // Read from `sCap.level` AND off the refusal, because they came apart
+        // once: a harness deriving the level as `capacity - headroom` reported
+        // the new capacity here, since the headroom clamps at zero whenever the
+        // level is above the capacity. A cut is the only state that distinguishes
+        // the two, so it is the only place a test can hold `level` to reporting
+        // what is owed rather than what fits.
         assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
         assertCapacityExceeded(mintRefused(sCap, ALICE, float(1)), capacityOver(10), capacityOver(2), float(1));
 
         // It drains under the new policy without intervention. The wait is the
@@ -291,9 +292,10 @@ contract LeakyBucketEmbeddingTest is Test {
             Float headroomBefore = sCap.headroom(ALICE);
             Float levelBefore = sCap.level(ALICE);
             assertTrue(headroomBefore.lte(workedCapacity()));
-            // The harness derives its level from its headroom, so this one is
-            // a round trip through the arithmetic rather than a second reading
-            // of the bucket. It still pins that the round trip is exact.
+            // Two independent reads of the same bucket: `headroomAt` clamps a
+            // subtraction from the capacity, `levelAt` leaks the stored level
+            // forward. They agree on every bucket at or under capacity, and
+            // this pins that they do.
             assertFloatEq(headroomBefore, workedCapacity().sub(levelBefore));
 
             if (amountFloat.lte(headroomBefore)) {
