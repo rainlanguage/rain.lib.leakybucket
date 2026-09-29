@@ -2,155 +2,157 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity ^0.8.25;
 
-import {LibSaturatingMath} from "rain-math-saturating-0.1.10/src/lib/LibSaturatingMath.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 
 /// A fill of `amount` does not fit: `level + amount > capacity`.
-error LeakyBucketCapacityExceeded(uint256 capacity, uint256 level, uint256 amount);
-
-/// `capacity` is above `LEAKY_BUCKET_LEVEL_MAX`.
-error LeakyBucketCapacityOverflow(uint256 capacity);
-
-/// `timestamp` does not fit the 64 bit timestamp field.
-error LeakyBucketTimestampOverflow(uint256 timestamp);
-
-/// `level` does not fit the 192 bit level field.
-error LeakyBucketLevelOverflow(uint256 level);
+error LeakyBucketCapacityExceeded(Float capacity, Float level, Float amount);
 
 /// `amount` is zero.
 error LeakyBucketZeroAmount();
 
+/// `amount` is negative. A fill adds; a negative fill would drain the bucket
+/// and so mint under a cap it never reached.
+error LeakyBucketNegativeAmount(Float amount);
+
+/// `capacity` is negative, so no fill could ever fit.
+error LeakyBucketNegativeCapacity(Float capacity);
+
+/// `leakRate` is negative, so the bucket would fill as time passed.
+error LeakyBucketNegativeLeakRate(Float leakRate);
+
 /// A bucket. The caller stores it; the library never writes it.
-/// @param checkpoint Packed `(level << 64) | timestamp`. Zero is empty.
-/// @param capacity Burst. At most `LEAKY_BUCKET_LEVEL_MAX`.
-/// @param leakRate Units leaked per second.
+/// @param level The level at `timestamp`.
+/// @param timestamp When `level` was recorded.
+/// @param capacity Burst.
+/// @param leakRate Units leaked per unit of time.
 struct LeakyBucket {
-    uint256 checkpoint;
-    uint256 capacity;
-    uint256 leakRate;
+    Float level;
+    Float timestamp;
+    Float capacity;
+    Float leakRate;
 }
 
 /// @title LibLeakyBucket
-/// @notice Pure leaky bucket over a `LeakyBucket` the caller holds. Timestamps
-/// are seconds. Arithmetic saturates: a leak never underflows the level and a
-/// backwards clock credits no leak.
+/// @notice Pure leaky bucket over a `LeakyBucket` the caller holds. Every field
+/// is a `Float`, timestamps included, so elapsed time is a subtraction in the
+/// same arithmetic as the level rather than a separate fixed point domain the
+/// caller converts across.
+///
+/// Nothing saturates at a type boundary any more, because a `Float` has no
+/// boundary a bucket reaches: the level, the capacity and the timestamp were
+/// each bounded by the field they were packed into, and none of them is packed
+/// now. What remains of the old saturation is the clamp at ZERO — a leak never
+/// takes the level below it and a backwards clock credits no leak — which is a
+/// property of the bucket rather than of the arithmetic.
 library LibLeakyBucket {
-    uint256 private constant LEAKY_BUCKET_TIMESTAMP_BITS = 64;
-    uint256 private constant LEAKY_BUCKET_TIMESTAMP_MAX = (uint256(1) << LEAKY_BUCKET_TIMESTAMP_BITS) - 1;
+    using LibDecimalFloat for Float;
 
-    /// Largest level a checkpoint holds, and so the largest usable capacity.
-    uint256 internal constant LEAKY_BUCKET_LEVEL_MAX = type(uint256).max >> LEAKY_BUCKET_TIMESTAMP_BITS;
+    /// Zero, as the rest of this library spells it.
+    function zero() private pure returns (Float) {
+        return LibDecimalFloat.packLossless(0, 0);
+    }
 
-    /// `level` after `elapsed` seconds of leak, saturating at zero.
-    function leak(uint256 level, uint256 elapsed, uint256 leakRate) private pure returns (uint256) {
-        return LibSaturatingMath.saturatingSub(level, LibSaturatingMath.saturatingMul(elapsed, leakRate));
+    /// `a` unless it is below zero.
+    function atLeastZero(Float a) private pure returns (Float) {
+        return LibDecimalFloat.max(a, zero());
+    }
+
+    /// `level` after `elapsed` of leak, clamped at zero.
+    function leak(Float level, Float elapsed, Float leakRate) private pure returns (Float) {
+        return atLeastZero(level.sub(elapsed.mul(leakRate)));
     }
 
     /// The level recorded at `checkpoint` leaked forward to `timestamp`.
-    function levelAt(uint256 level, uint256 checkpoint, uint256 timestamp, uint256 leakRate)
+    ///
+    /// The elapsed time is clamped at zero, so a `timestamp` before the
+    /// checkpoint leaks nothing rather than crediting a negative elapsed
+    /// against the level.
+    function levelAt(Float level, Float checkpoint, Float timestamp, Float leakRate) private pure returns (Float) {
+        return leak(level, atLeastZero(timestamp.sub(checkpoint)), leakRate);
+    }
+
+    /// `capacity - levelNow`, clamped at zero.
+    function headroomFrom(Float capacity, Float levelNow) private pure returns (Float) {
+        return atLeastZero(capacity.sub(levelNow));
+    }
+
+    /// Reverts on a bucket that cannot answer, so a read refuses exactly where
+    /// a fill would.
+    ///
+    /// A negative capacity admits no fill and a negative leak rate fills the
+    /// bucket as time passes, which is the opposite of a leak. Neither is a
+    /// stricter bucket, so neither is treated as one.
+    function checkFillableDomain(Float capacity, Float leakRate) private pure {
+        if (capacity.lt(zero())) {
+            revert LeakyBucketNegativeCapacity(capacity);
+        }
+        if (leakRate.lt(zero())) {
+            revert LeakyBucketNegativeLeakRate(leakRate);
+        }
+    }
+
+    /// The level after filling `amount` at `timestamp`.
+    function fillAt(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate, Float amount)
         private
         pure
-        returns (uint256)
+        returns (Float)
     {
-        return leak(level, LibSaturatingMath.saturatingSub(timestamp, checkpoint), leakRate);
-    }
-
-    /// `capacity - levelNow`, saturating at zero.
-    function headroomFrom(uint256 capacity, uint256 levelNow) private pure returns (uint256) {
-        return LibSaturatingMath.saturatingSub(capacity, levelNow);
-    }
-
-    /// The level after filling `amount` at `timestamp`. Reverts with
-    /// `LeakyBucketZeroAmount` on a zero amount and `LeakyBucketCapacityExceeded`
-    /// if `amount` is over the headroom.
-    function fillAt(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        uint256 capacity,
-        uint256 leakRate,
-        uint256 amount
-    ) private pure returns (uint256) {
-        if (amount == 0) {
+        if (amount.isZero()) {
             revert LeakyBucketZeroAmount();
         }
-        uint256 levelNow = levelAt(level, checkpoint, timestamp, leakRate);
-        uint256 headroom = headroomFrom(capacity, levelNow);
-        if (amount > headroom) {
+        if (amount.lt(zero())) {
+            revert LeakyBucketNegativeAmount(amount);
+        }
+        Float levelNow = levelAt(level, checkpoint, timestamp, leakRate);
+        Float headroom = headroomFrom(capacity, levelNow);
+        if (amount.gt(headroom)) {
             revert LeakyBucketCapacityExceeded(capacity, levelNow, amount);
         }
-        unchecked {
-            // `amount <= headroom <= capacity - levelNow`.
-            return levelNow + amount;
-        }
+        return levelNow.add(amount);
     }
 
-    function checkCapacity(uint256 capacity) private pure {
-        if (capacity > LEAKY_BUCKET_LEVEL_MAX) {
-            revert LeakyBucketCapacityOverflow(capacity);
-        }
-    }
-
-    function checkTimestamp(uint256 timestamp) private pure {
-        if (timestamp > LEAKY_BUCKET_TIMESTAMP_MAX) {
-            revert LeakyBucketTimestampOverflow(timestamp);
-        }
-    }
-
-    /// Reverts unless both `fill` and `headroomAt` accept the pair, so a read
-    /// never answers where a fill would refuse.
-    function checkFillableDomain(uint256 capacity, uint256 timestamp) private pure {
-        checkCapacity(capacity);
-        checkTimestamp(timestamp);
-    }
-
-    /// `(level << 64) | timestamp`. Reverts with `LeakyBucketLevelOverflow` or
-    /// `LeakyBucketTimestampOverflow` if a field does not fit.
-    function pack(uint256 level, uint256 timestamp) internal pure returns (uint256) {
-        if (level > LEAKY_BUCKET_LEVEL_MAX) {
-            revert LeakyBucketLevelOverflow(level);
-        }
-        checkTimestamp(timestamp);
-        unchecked {
-            return (level << LEAKY_BUCKET_TIMESTAMP_BITS) | timestamp;
-        }
-    }
-
-    function max(uint256 a, uint256 b) private pure returns (uint256) {
-        return a > b ? a : b;
-    }
-
-    /// The two fields of a packed checkpoint.
-    function unpack(uint256 checkpoint) internal pure returns (uint256 level, uint256 timestamp) {
-        unchecked {
-            level = checkpoint >> LEAKY_BUCKET_TIMESTAMP_BITS;
-            timestamp = checkpoint & LEAKY_BUCKET_TIMESTAMP_MAX;
-        }
+    /// The outstanding level at `timestamp`, leaked forward from the stored
+    /// checkpoint.
+    ///
+    /// Exported because it cannot be derived from `headroomAt`. `capacity -
+    /// headroom` agrees with the level only while the level is at or under the
+    /// capacity; the headroom clamps at zero, so once a capacity is lowered
+    /// under an outstanding level that subtraction returns the capacity and
+    /// silently under-reports what is owed. A caller that wants the level has to
+    /// be given it.
+    /// @param bucket The bucket. Not modified.
+    /// @param timestamp When to read at.
+    /// @return The level at `timestamp`.
+    function levelAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
+        checkFillableDomain(bucket.capacity, bucket.leakRate);
+        return levelAt(bucket.level, bucket.timestamp, timestamp, bucket.leakRate);
     }
 
     /// The amount `fill` would accept at `timestamp`. Reverts on the same
-    /// capacity and timestamp `fill` refuses.
+    /// buckets `fill` refuses.
     /// @param bucket The bucket. Not modified.
-    /// @param timestamp Seconds.
+    /// @param timestamp When to read at.
     /// @return Headroom at `timestamp`.
-    function headroomAt(LeakyBucket memory bucket, uint256 timestamp) internal pure returns (uint256) {
-        checkFillableDomain(bucket.capacity, timestamp);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
-        return headroomFrom(bucket.capacity, levelAt(level, checkpointTimestamp, timestamp, bucket.leakRate));
+    function headroomAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
+        checkFillableDomain(bucket.capacity, bucket.leakRate);
+        return headroomFrom(bucket.capacity, levelAt(bucket.level, bucket.timestamp, timestamp, bucket.leakRate));
     }
 
     /// Fill `amount` at `timestamp`. The returned checkpoint carries the later
     /// of `timestamp` and the stored timestamp, so a backwards clock never
-    /// re-credits leak.
+    /// re-credits leak on the next fill.
     /// @param bucket The bucket. Not modified.
-    /// @param timestamp Seconds.
+    /// @param timestamp When to fill at.
     /// @param amount The amount to fill.
-    /// @return The new checkpoint, to store as `bucket.checkpoint`.
-    function fill(LeakyBucket memory bucket, uint256 timestamp, uint256 amount) internal pure returns (uint256) {
-        checkFillableDomain(bucket.capacity, timestamp);
-        (uint256 level, uint256 checkpointTimestamp) = unpack(bucket.checkpoint);
-        return pack(
-            fillAt(level, checkpointTimestamp, timestamp, bucket.capacity, bucket.leakRate, amount),
-            max(timestamp, checkpointTimestamp)
-        );
+    /// @return level The new level, to store as `bucket.level`.
+    /// @return checkpoint The new timestamp, to store as `bucket.timestamp`.
+    function fill(LeakyBucket memory bucket, Float timestamp, Float amount)
+        internal
+        pure
+        returns (Float level, Float checkpoint)
+    {
+        checkFillableDomain(bucket.capacity, bucket.leakRate);
+        level = fillAt(bucket.level, bucket.timestamp, timestamp, bucket.capacity, bucket.leakRate, amount);
+        checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);
     }
 }

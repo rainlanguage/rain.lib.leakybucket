@@ -3,13 +3,27 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketMintCap} from "./LeakyBucketMintCap.sol";
 import {LeakyBucketCapacityExceeded} from "../../src/lib/LibLeakyBucket.sol";
 
 /// @title LeakyBucketHandler
 /// @notice Call generator for `LeakyBucketInvariant.t.sol`: mints, waits and
 /// policy changes in fuzzed order, recording what the cap should have done.
+///
+/// Every amount is a whole number held at exponent zero, and bounded well below
+/// the coefficient's range. That is what keeps `assertEq(level, before + amount)`
+/// an exact claim: two `Float`s at the same exponent add without alignment, so
+/// no term is lost. Fuzzing across exponents would put this handler's bookkeeping
+/// on the wrong side of a precision boundary and turn a real invariant into one
+/// that fails for arithmetic reasons rather than bucket reasons.
 contract LeakyBucketHandler is Test {
+    using LibDecimalFloat for Float;
+
+    /// The largest amount the fuzzer may produce. Far below the `Float`
+    /// coefficient's range, so sums stay exact at exponent zero.
+    uint256 internal constant MAX_AMOUNT = type(uint128).max;
+
     /// The cap under test.
     LeakyBucketMintCap internal immutable CAP;
 
@@ -18,7 +32,7 @@ contract LeakyBucketHandler is Test {
 
     /// Held fixed for the whole run, so the throughput bound the invariant
     /// asserts stays exact.
-    uint256 internal immutable LEAK_RATE;
+    Float internal immutable LEAK_RATE;
 
     /// The timestamp the run started at, for the elapsed window in the
     /// throughput bound.
@@ -41,34 +55,63 @@ contract LeakyBucketHandler is Test {
     constructor(LeakyBucketMintCap cap, address minter, uint256 capacity_, uint256 leakRate) {
         CAP = cap;
         MINTER = minter;
-        LEAK_RATE = leakRate;
+        LEAK_RATE = asFloat(leakRate);
         capacity = capacity_;
         START = block.timestamp;
+    }
+
+    /// A whole number as a `Float` at exponent zero.
+    function asFloat(uint256 value) internal pure returns (Float) {
+        //forge-lint: disable-next-line(unsafe-typecast)
+        return LibDecimalFloat.packLossless(int256(value), 0);
+    }
+
+    /// A revert reason without its four byte selector, so the arguments decode.
+    function sliceReason(bytes memory reason) internal pure returns (bytes memory) {
+        bytes memory args = new bytes(reason.length - 4);
+        for (uint256 i = 0; i < args.length; i++) {
+            args[i] = reason[i + 4];
+        }
+        return args;
     }
 
     /// A mint of an arbitrary size, at whatever point in the history the fuzzer
     /// has built up to.
     function mint(uint256 amount) external {
         amount = bound(amount, 1, capacity > 0 ? capacity : 1);
-        uint256 headroomBefore = CAP.headroom(MINTER);
-        uint256 levelBefore = CAP.level(MINTER);
+        Float amountFloat = asFloat(amount);
+        Float headroomBefore = CAP.headroom(MINTER);
+        Float levelBefore = CAP.level(MINTER);
 
         vm.prank(MINTER);
-        try CAP.mint(amount) {
+        try CAP.mint(amountFloat) {
             // It landed, so it must have fitted, and it must have moved the
             // level by exactly what was minted.
-            assertLe(amount, headroomBefore);
+            assertTrue(amountFloat.lte(headroomBefore));
             minted += amount;
-            assertEq(CAP.level(MINTER), levelBefore + amount);
+            assertTrue(CAP.level(MINTER).eq(levelBefore.add(amountFloat)));
         } catch (bytes memory reason) {
             // It was refused, so it must not have fitted, it must have been
             // refused for that reason and no other, and the bucket must be
             // exactly what it was.
-            assertGt(amount, headroomBefore);
-            assertEq(
-                reason, abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, levelBefore, amount)
-            );
-            assertEq(CAP.level(MINTER), levelBefore);
+            //
+            // The three fields are decoded and compared as numbers rather than
+            // the whole reason compared as bytes. One number has more than one
+            // `Float` word — `sub` returns a maximized-then-truncated
+            // coefficient where `packLossless` returns the plain one — so byte
+            // equality would assert on which representation the arithmetic
+            // happened to take rather than on the value it reports.
+            assertTrue(amountFloat.gt(headroomBefore));
+            // Truncating to the first four bytes is what reads the selector.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            bytes4 selector = bytes4(reason);
+            assertEq(selector, LeakyBucketCapacityExceeded.selector);
+            (Float reportedCapacity, Float reportedLevel, Float reportedAmount) =
+                abi.decode(sliceReason(reason), (Float, Float, Float));
+            assertTrue(reportedCapacity.eq(asFloat(capacity)));
+            assertTrue(reportedLevel.eq(levelBefore));
+            assertTrue(reportedAmount.eq(amountFloat));
+            assertTrue(CAP.level(MINTER).eq(levelBefore));
         }
     }
 
@@ -83,6 +126,6 @@ contract LeakyBucketHandler is Test {
     /// all.
     function setCapacity(uint256 capacity_) external {
         capacity = bound(capacity_, 0, capacity);
-        CAP.setPolicy(MINTER, capacity, LEAK_RATE);
+        CAP.setPolicy(MINTER, asFloat(capacity), LEAK_RATE);
     }
 }
