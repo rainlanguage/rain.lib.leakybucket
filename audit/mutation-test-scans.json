@@ -235,5 +235,32 @@
       "filed": [],
       "notes": "M55, M56 and M57, pack's own guards, survived the previous five records because fill bounded them out of reach; pack is now exported and testPackRevertsOnAWideLevel, testPackRevertsOnAWideTimestamp and testPackUnpackRoundTrip kill them. Isolated clone, green 59 test baseline, 0 harness errors."
     }
+  },
+  {
+    "timestamp": "2026-09-29T23:40:00Z",
+    "commit": "00912e8c4adfe1488dc0f84daeadb82f626f23f0",
+    "testsAfterCommit": "00912e8c4adfe1488dc0f84daeadb82f626f23f0",
+    "publishedTag": "sol-v0.4.0",
+    "commitsAheadOfTag": 6,
+    "scope": "src/lib/LibLeakyBucket.sol after the port from uint256 fixed point to Rain Floats (branch 2026-09-29-floats, PR #116): the zero clamp, the leak, elapsed time, the headroom, the fillable domain on all three entry points, the amount guards, the checkpoint. README and NatSpec as intent oracle, plus S01-Issuer/st0x.attest SPEC.md items 31-33.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 17,
+      "mutantsKilledByPreExistingSuite": 16,
+      "mutantsSurvivedPreExistingSuite": 1,
+      "mutantsKilledAfter": 17,
+      "candidates": 2,
+      "confirmed": 2,
+      "testsBefore": 58,
+      "testsAfter": 58,
+      "coveragePRs": [
+        "#116"
+      ],
+      "filed": [
+        "#117"
+      ],
+      "notes": "Scan of a port, not of a published tree: the whole library changed in this branch, so the pre-existing suite being probed is the ported suite at fb4a0cc rather than anything released. Single survivor was M16, checkFillableDomain dropped from levelAt: that function was exported in this branch and the two domain tests were never extended to it, so an export shipped with its guard untested, while the same mutation in headroomAt (M15) and fill (M17) was killed. Closed by extending testEntryPointsRejectANegativeCapacity and testEntryPointsRejectANegativeLeakRate in place, so testsAfter is unchanged at 58. Two adversarial findings, both confirmed, both from asking whether a test's own assertion was weaker than the property it named. The first was fixed in this branch and not filed: LeakyBucketMintCap.level derived the level as capacity minus headroom, and the headroom clamps at zero exactly when the level is above the capacity, so after a governance capacity cut it reported the new capacity (360) instead of what was owed (1800); fixed by exporting LibLeakyBucket.levelAt and asserting it in testCapacityCutBindsImmediately, which fails 360 != 180 against the old derivation. The second is filed as #117 and NOT fixed: fill accepts an amount about 68 decimal orders below the level and credits nothing, because Float carries ~67 exact digits and the amount falls off the coefficient's tail. Boundary located exactly at a level of 1e40 with an amount of 1e-28; gaps of 67 and below credit exactly. The fixed point version could not express this, since one shared scale meant an accepted amount was always credited. FloatHazards.t.sol keeps the weaker word-inequality assertion with #117 named against it, because the strong assertion fails and a test asserting the current behaviour would enshrine the bug. Probe integrity: green 58 baseline before every pass, byte-exact restore verified, 0 no-run, 0 harness errors, suite run with forge test --force so no verdict was scored against a stale artifact."
+    }
   }
 ]
