@@ -313,5 +313,28 @@
       "filed": [],
       "notes": "Clean pass: 19/19 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. No test changed; the count rose from 18 to 19 because centralising the subtraction into saturatingSub split the old M01 into two behaviours of the helper, min-vs-max and add-vs-sub, where before the max() call and the sub() it wrapped sat on separate lines per call site. The six mutants that named atLeastZero were retargeted at the saturatingSub spelling and the tail renumbered M09 through M19. Both mutations that remove the saturation at a single call site are still expressible and still killed: M05 drops it from elapsed and M08 from the headroom. The rename is behaviour-preserving, which is what 19/19 against an untouched suite says: the same tests that killed the atLeastZero mutants kill the saturatingSub ones, and no verdict moved. Probe integrity: green 58 baseline before the pass, byte-exact restore verified by the tool, suite run with forge test --force so no verdict was scored against a stale artifact. An earlier attempt at this pass was killed by hand partway through, roughly eight minutes in, because the saturatingSub rename was still pending and would have rewritten six of the target lines it was scoring; the working tree was restored from the commit and the pass re-run whole."
     }
+  },
+  {
+    "timestamp": "2026-09-30T12:40:00Z",
+    "commit": "adca781dc607cd872defadcf00661a3c27a71d89",
+    "testsAfterCommit": "adca781dc607cd872defadcf00661a3c27a71d89",
+    "publishedTag": "sol-v0.4.0",
+    "commitsAheadOfTag": 14,
+    "scope": "re-probe of src/lib/LibLeakyBucket.sol after the CodeRabbit review on #116. src is unchanged since the previous entry; the test tree moved, so the matrix is re-established rather than assumed.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 19,
+      "mutantsKilledByPreExistingSuite": 19,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 19,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 58,
+      "testsAfter": 58,
+      "coveragePRs": ["#116"],
+      "filed": [],
+      "notes": "Clean pass: 19/19 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. The review change that matters to this record is the scratch levelAt helper, which derived the level as capacity minus headroomAt and so had 26 assertions spelling levelAt exercising headroomAt instead. That is why M17, dropping the domain check from levelAt, was the lone survivor of the 2026-09-29T23:40 scan. The helper calls the export now and M17 is killed. Values did not move: probeCapacity is 1e40 against a MAX_LEVEL of 2**128-1, so the level never exceeds the capacity and the round trip through the headroom was exact at those magnitudes; what changed is which function the assertions reach. Also in this pass: sliceReason no longer underflows on revert data shorter than four bytes, and the per-file copies of float, signedFloat, capacityOver, probeCapacity, the float assertions, fillRefused and assertCapacityExceeded are consolidated into FloatWords.sol, WorkedPolicy.sol and a new LeakyBucketAsserts, the copies having already drifted apart in their comments. testsAfter is unchanged at 58 because nothing was added, only relocated and repointed."
+    }
   }
 ]
