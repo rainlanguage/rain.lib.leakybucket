@@ -51,14 +51,9 @@ struct LeakyBucket {
 library LibLeakyBucket {
     using LibDecimalFloat for Float;
 
-    /// Zero, as the rest of this library spells it.
-    function zero() private pure returns (Float) {
-        return LibDecimalFloat.packLossless(0, 0);
-    }
-
     /// `a` unless it is below zero.
     function atLeastZero(Float a) private pure returns (Float) {
-        return LibDecimalFloat.max(a, zero());
+        return LibDecimalFloat.max(a, LibDecimalFloat.FLOAT_ZERO);
     }
 
     /// `level` after `elapsed` of leak, clamped at zero.
@@ -87,10 +82,10 @@ library LibLeakyBucket {
     /// bucket as time passes, which is the opposite of a leak. Neither is a
     /// stricter bucket, so neither is treated as one.
     function checkFillableDomain(Float capacity, Float leakRate) private pure {
-        if (capacity.lt(zero())) {
+        if (capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeCapacity(capacity);
         }
-        if (leakRate.lt(zero())) {
+        if (leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeLeakRate(leakRate);
         }
     }
@@ -104,7 +99,7 @@ library LibLeakyBucket {
         if (amount.isZero()) {
             revert LeakyBucketZeroAmount();
         }
-        if (amount.lt(zero())) {
+        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeAmount(amount);
         }
         Float levelNow = levelAt(level, checkpoint, timestamp, leakRate);

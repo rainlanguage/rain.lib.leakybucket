@@ -36,14 +36,16 @@ abstract contract LeakyBucketScratch {
         return LibLeakyBucket.headroomAt(bucket(level, checkpoint, capacity, leakRate), timestamp);
     }
 
-    /// The outstanding level of a bucket at a time, derived from the one read
-    /// the library exports rather than from the stored field, so a test that
-    /// asserts on it is asserting on what a reader would see.
+    /// The outstanding level of a bucket at a time, derived through the
+    /// headroom, so a test that asserts on it is asserting that the two reads
+    /// agree.
     ///
     /// `capacity` must be at or above the level, or the headroom clamps at zero
-    /// and this returns the capacity rather than the level. The old version
-    /// used `LEAKY_BUCKET_LEVEL_MAX` for the same purpose; there is no such
-    /// bound on a `Float`, so the caller names a capacity it knows is enough.
+    /// and this returns the capacity rather than the level — which is why
+    /// `LibLeakyBucket.levelAt` exists and callers wanting the level use that.
+    /// The old version used `LEAKY_BUCKET_LEVEL_MAX` for the same purpose; there
+    /// is no such bound on a `Float`, so the caller names a capacity it knows is
+    /// enough.
     /// @param level The stored level.
     /// @param checkpoint When `level` was recorded.
     /// @param timestamp The time to evaluate at.

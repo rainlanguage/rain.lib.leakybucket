@@ -18,8 +18,8 @@ timeout-secs = 1800
 [[mutants]]
 name = "M01 the clamp takes the smaller, so a negative level is kept"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return LibDecimalFloat.max(a, zero());"
-replacement = "return LibDecimalFloat.min(a, zero());"
+target = "return LibDecimalFloat.max(a, LibDecimalFloat.FLOAT_ZERO);"
+replacement = "return LibDecimalFloat.min(a, LibDecimalFloat.FLOAT_ZERO);"
 
 # --- the leak ---
 
@@ -66,14 +66,14 @@ replacement = "return capacity.sub(levelNow);"
 [[mutants]]
 name = "M08 a negative capacity is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (capacity.lt(zero())) {"
-replacement = "if (capacity.gt(zero())) {"
+target = "if (capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (capacity.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 [[mutants]]
 name = "M09 a negative leak rate is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (leakRate.lt(zero())) {"
-replacement = "if (leakRate.gt(zero())) {"
+target = "if (leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (leakRate.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 # --- the amount guards ---
 
@@ -86,8 +86,8 @@ replacement = "if (false) {"
 [[mutants]]
 name = "M11 a negative amount is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (amount.lt(zero())) {"
-replacement = "if (amount.gt(zero())) {"
+target = "if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (amount.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 [[mutants]]
 name = "M12 an amount exactly at the headroom is refused"
