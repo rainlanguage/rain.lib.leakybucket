@@ -6,20 +6,15 @@ import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
 import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
-import {workedCapacity, workedLeakRate, workedDrain} from "../../lib/WorkedPolicy.sol";
-
-/// A whole number as a `Float` at exponent zero, which is how every amount in
-/// this file is built.
-function float(uint256 value) pure returns (Float) {
-    //forge-lint: disable-next-line(unsafe-typecast)
-    return LibDecimalFloat.packLossless(int256(value), 0);
-}
+import {workedCapacity, workedLeakRate, workedDrain, capacityOver} from "../../lib/WorkedPolicy.sol";
+import {float} from "../../lib/FloatWords.sol";
+import {LeakyBucketAsserts} from "../../abstract/LeakyBucketAsserts.sol";
 
 /// The library under a real storage layout and a real clock, which is where the
 /// mistakes that pure function tests cannot see would show up: state written
 /// back wrong, buckets bleeding into each other, a policy change landing at the
 /// wrong moment.
-contract LeakyBucketEmbeddingTest is Test {
+contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
     using LibDecimalFloat for Float;
 
     LeakyBucketMintCap internal sCap;
@@ -27,39 +22,10 @@ contract LeakyBucketEmbeddingTest is Test {
     address internal constant ALICE = address(uint160(uint256(keccak256("alice"))));
     address internal constant BOB = address(uint160(uint256(keccak256("bob"))));
 
-    /// An exact fraction of the worked capacity, which is the policy the suite
-    /// examines, from `test/lib/WorkedPolicy.sol`: a 3600 unit burst at one unit
-    /// per second sustained, so a full bucket drains in exactly `workedDrain()`
-    /// seconds and every assertion below is exact whole number arithmetic.
-    ///
-    /// Every divisor this file uses — 2, 4, 10 and 20 — divides 3600 exactly in
-    /// decimal, so what comes back is the number the test names rather than a
-    /// rounding of it.
-    function capacityOver(uint256 divisor) internal pure returns (Float) {
-        return workedCapacity().div(float(divisor));
-    }
-
     /// The worked capacity as a plain word, so the fuzzer can draw an amount
     /// bounded by it. Taken from the policy rather than restated beside it.
     function capacityWord() internal pure returns (uint256) {
         return workedCapacity().toFixedDecimalLossless(0);
-    }
-
-    /// Floats compare as numbers, not as words.
-    ///
-    /// `1800e0` and `18e2` are the same number held two ways, and which one an
-    /// operation lands on is an artifact of the arithmetic rather than anything
-    /// the cap promises.
-    function assertFloatEq(Float actual, Float expected) internal pure {
-        if (!actual.eq(expected)) {
-            (int256 actualCoefficient, int256 actualExponent) = actual.unpack();
-            (int256 expectedCoefficient, int256 expectedExponent) = expected.unpack();
-            // Asserted rather than just reverted, so the failure prints both
-            // numbers.
-            assertEq(actualCoefficient, expectedCoefficient, "coefficient");
-            assertEq(actualExponent, expectedExponent, "exponent");
-            revert("float mismatch");
-        }
     }
 
     /// The revert data of a mint that must not be accepted.
@@ -70,32 +36,6 @@ contract LeakyBucketEmbeddingTest is Test {
         } catch (bytes memory reason) {
             return reason;
         }
-    }
-
-    /// The three fields of the `LeakyBucketCapacityExceeded` a call reverted
-    /// with, checked one at a time as numbers.
-    ///
-    /// The old tests matched the whole encoded error as bytes, which they could
-    /// because every field was a `uint256` and a `uint256` has one
-    /// representation. A `Float` does not, so matching bytes would be asserting
-    /// on which representation the arithmetic happened to produce. The claim
-    /// made here is the one the old form made: this error, carrying these three
-    /// values, rather than a panic, an out of gas, or a rejection of some other
-    /// amount.
-    function assertCapacityExceeded(bytes memory reason, Float capacity, Float level, Float amount) internal pure {
-        assertEq(reason.length, 4 + 3 * 32, "not a three field error");
-        // Truncating to the first four bytes is the point: the selector is
-        // what says which error this is.
-        //forge-lint: disable-next-line(unsafe-typecast)
-        assertTrue(bytes4(reason) == LeakyBucketCapacityExceeded.selector, "not LeakyBucketCapacityExceeded");
-        bytes memory args = new bytes(reason.length - 4);
-        for (uint256 i = 0; i < args.length; i++) {
-            args[i] = reason[i + 4];
-        }
-        (bytes32 errCapacity, bytes32 errLevel, bytes32 errAmount) = abi.decode(args, (bytes32, bytes32, bytes32));
-        assertFloatEq(Float.wrap(errCapacity), capacity);
-        assertFloatEq(Float.wrap(errLevel), level);
-        assertFloatEq(Float.wrap(errAmount), amount);
     }
 
     function setUp() external {

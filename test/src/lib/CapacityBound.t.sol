@@ -5,117 +5,13 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
-import {workedCapacity, workedLeakRate, workedDrain} from "../../lib/WorkedPolicy.sol";
-import {LeakyBucketScratch} from "../../abstract/LeakyBucketScratch.sol";
-
-/// A whole number as a `Float` at exponent zero.
-///
-/// Every number in this file is built here, fuzzed ones included: the fuzzer
-/// draws a word, the bounds below narrow it, and this packs it. Fuzzing a
-/// `Float` directly would draw an exponent as well, and what a bound said about
-/// the word would say nothing about the number.
-function float(uint256 value) pure returns (Float) {
-    //forge-lint: disable-next-line(unsafe-typecast)
-    return LibDecimalFloat.packLossless(int256(value), 0);
-}
+import {workedCapacity, workedLeakRate, workedDrain, capacityOver} from "../../lib/WorkedPolicy.sol";
+import {LeakyBucketAsserts} from "../../abstract/LeakyBucketAsserts.sol";
+import {float} from "../../lib/FloatWords.sol";
 
 /// What `capacity` does and does not bound.
-contract CapacityBoundTest is Test, LeakyBucketScratch {
+contract CapacityBoundTest is LeakyBucketAsserts {
     using LibDecimalFloat for Float;
-
-    /// Every fuzzed number here is a whole number at exponent zero, drawn from
-    /// these bounds.
-    ///
-    /// The bounds are what keeps the assertions exact. A `Float` carries 224
-    /// bits of coefficient, about 67 decimal digits, and a sum or a product
-    /// needing more digits than that keeps its magnitude and drops its tail.
-    /// Levels and capacities of at most `2**128`, times of at most `2**64` and
-    /// leak rates of at most `2**128` put the widest product this file can
-    /// build — an elapsed time times a leak rate — at about 58 digits, so
-    /// nothing below rounds.
-    ///
-    /// The old bounds were the packed fields: `uint192` for a level, `uint64`
-    /// for a timestamp, and the whole word for a leak rate, which took no part
-    /// in the packing. Nothing is packed now, so these are precision bounds
-    /// rather than layout ones, and a leak rate is bounded like everything
-    /// else.
-    uint256 internal constant MAX_LEVEL = type(uint128).max;
-    uint256 internal constant MAX_TIME = type(uint64).max;
-    uint256 internal constant MAX_LEAK_RATE = type(uint128).max;
-
-    /// A capacity above every level the bounds above can reach, for the reads
-    /// that want a level rather than a headroom.
-    ///
-    /// `LeakyBucketScratch.levelAt` derives the level from the headroom, and
-    /// the headroom saturates at zero, so it needs a capacity it cannot saturate
-    /// against. The old suite had `LEAKY_BUCKET_LEVEL_MAX` to hand for this; a
-    /// `Float` has no such ceiling to borrow, so the bound is named here.
-    function probeCapacity() internal pure returns (Float) {
-        return LibDecimalFloat.packLossless(1, 40);
-    }
-
-    /// An exact fraction of the worked capacity. Two divides 3600 exactly in
-    /// decimal, so this is the number the test names rather than a rounding of
-    /// it.
-    function capacityOver(uint256 divisor) internal pure returns (Float) {
-        return workedCapacity().div(float(divisor));
-    }
-
-    /// Floats compare as numbers, not as words.
-    ///
-    /// `1800e0` and `18e2` are the same number held two ways, and which one an
-    /// operation lands on is an artifact of the arithmetic rather than
-    /// anything the bucket promises.
-    function assertFloatEq(Float actual, Float expected) internal pure {
-        if (!actual.eq(expected)) {
-            (int256 actualCoefficient, int256 actualExponent) = actual.unpack();
-            (int256 expectedCoefficient, int256 expectedExponent) = expected.unpack();
-            // Asserted rather than just reverted, so the failure prints both
-            // numbers.
-            assertEq(actualCoefficient, expectedCoefficient, "coefficient");
-            assertEq(actualExponent, expectedExponent, "exponent");
-            revert("float mismatch");
-        }
-    }
-
-    /// The revert data of a fill that must not be accepted.
-    function fillRefused(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate, Float amount)
-        internal
-        view
-        returns (bytes memory)
-    {
-        try this.externalFill(level, checkpoint, timestamp, capacity, leakRate, amount) returns (Float, Float) {
-            revert("fill was accepted");
-        } catch (bytes memory reason) {
-            return reason;
-        }
-    }
-
-    /// The three fields of the `LeakyBucketCapacityExceeded` a call reverted
-    /// with, checked one at a time as numbers.
-    ///
-    /// The old tests matched the whole encoded error as bytes, which they could
-    /// because every field was a `uint256` and a `uint256` has one
-    /// representation. A `Float` does not, so matching bytes would be asserting
-    /// on which representation the arithmetic happened to produce. The claim
-    /// made here is the one the old form made: this error, carrying these three
-    /// values, rather than a panic, an out of gas, or a rejection of some other
-    /// amount.
-    function assertCapacityExceeded(bytes memory reason, Float capacity, Float level, Float amount) internal pure {
-        assertEq(reason.length, 4 + 3 * 32, "not a three field error");
-        // Truncating to the first four bytes is the point: the selector is
-        // what says which error this is.
-        //forge-lint: disable-next-line(unsafe-typecast)
-        assertTrue(bytes4(reason) == LeakyBucketCapacityExceeded.selector, "not LeakyBucketCapacityExceeded");
-        bytes memory args = new bytes(reason.length - 4);
-        for (uint256 i = 0; i < args.length; i++) {
-            args[i] = reason[i + 4];
-        }
-        (bytes32 errCapacity, bytes32 errLevel, bytes32 errAmount) = abi.decode(args, (bytes32, bytes32, bytes32));
-        assertFloatEq(Float.wrap(errCapacity), capacity);
-        assertFloatEq(Float.wrap(errLevel), level);
-        assertFloatEq(Float.wrap(errAmount), amount);
-    }
 
     /// Idling accrues NO credit beyond the capacity: however long a bucket sits
     /// untouched, the most it can ever offer is one full capacity, and there is

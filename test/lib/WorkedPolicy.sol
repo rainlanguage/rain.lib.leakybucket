@@ -3,6 +3,7 @@
 pragma solidity ^0.8.25;
 
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
+import {float} from "./FloatWords.sol";
 
 // The worked policy: a 3600 unit burst draining at one unit per second.
 //
@@ -20,4 +21,11 @@ function workedLeakRate() pure returns (Float) {
 /// How long the worked policy takes to drain from full.
 function workedDrain() pure returns (uint256) {
     return 3600;
+}
+
+/// An exact fraction of the worked capacity. Two and ten both divide 3600
+/// exactly in decimal, so this is the number a test names rather than a
+/// rounding of it.
+function capacityOver(uint256 divisor) pure returns (Float) {
+    return LibDecimalFloat.div(workedCapacity(), float(divisor));
 }

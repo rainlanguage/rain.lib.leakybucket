@@ -36,28 +36,29 @@ abstract contract LeakyBucketScratch {
         return LibLeakyBucket.headroomAt(bucket(level, checkpoint, capacity, leakRate), timestamp);
     }
 
-    /// The outstanding level of a bucket at a time, derived through the
-    /// headroom, so a test that asserts on it is asserting that the two reads
-    /// agree.
+    /// `LibLeakyBucket.levelAt` over a bucket built from these words.
     ///
-    /// `capacity` must be at or above the level, or the headroom saturates at zero
-    /// and this returns the capacity rather than the level — which is why
-    /// `LibLeakyBucket.levelAt` exists and callers wanting the level use that.
-    /// The old version used `LEAKY_BUCKET_LEVEL_MAX` for the same purpose; there
-    /// is no such bound on a `Float`, so the caller names a capacity it knows is
-    /// enough.
+    /// This derived the level as `capacity - headroomAt` while the library had
+    /// no level read to call, which meant every assertion spelled `levelAt` was
+    /// in fact exercising `headroomAt`. The library exports `levelAt` now, so
+    /// this calls it: the tests that name the level read are the tests that
+    /// cover it. That the two reads agree on a bucket under its capacity is
+    /// pinned separately, in `LeakyBucketEmbedding`.
+    ///
+    /// `capacity` no longer has to be at or above the level and is here only to
+    /// build the bucket and pass the domain check.
     /// @param level The stored level.
     /// @param checkpoint When `level` was recorded.
     /// @param timestamp The time to evaluate at.
     /// @param leakRate The leak in units per unit of time.
-    /// @param capacity A capacity at or above the level at `timestamp`.
+    /// @param capacity Any capacity the domain check accepts.
     /// @return The level as at `timestamp`.
     function levelAt(Float level, Float checkpoint, Float timestamp, Float leakRate, Float capacity)
         internal
         pure
         returns (Float)
     {
-        return capacity.sub(headroomAt(level, checkpoint, timestamp, capacity, leakRate));
+        return LibLeakyBucket.levelAt(bucket(level, checkpoint, capacity, leakRate), timestamp);
     }
 
     /// `fill` across an external boundary, for `expectRevert`.

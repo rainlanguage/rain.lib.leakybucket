@@ -6,6 +6,8 @@ import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketMintCap} from "./LeakyBucketMintCap.sol";
 import {LeakyBucketCapacityExceeded} from "../../src/lib/LibLeakyBucket.sol";
+import {LeakyBucketAsserts} from "../abstract/LeakyBucketAsserts.sol";
+import {float} from "../lib/FloatWords.sol";
 
 /// @title LeakyBucketHandler
 /// @notice Call generator for `LeakyBucketInvariant.t.sol`: mints, waits and
@@ -17,7 +19,7 @@ import {LeakyBucketCapacityExceeded} from "../../src/lib/LibLeakyBucket.sol";
 /// no term is lost. Fuzzing across exponents would put this handler's bookkeeping
 /// on the wrong side of a precision boundary and turn a real invariant into one
 /// that fails for arithmetic reasons rather than bucket reasons.
-contract LeakyBucketHandler is Test {
+contract LeakyBucketHandler is LeakyBucketAsserts {
     using LibDecimalFloat for Float;
 
     /// The largest amount the fuzzer may produce. Far below the `Float`
@@ -55,31 +57,16 @@ contract LeakyBucketHandler is Test {
     constructor(LeakyBucketMintCap cap, address minter, uint256 capacity_, uint256 leakRate) {
         CAP = cap;
         MINTER = minter;
-        LEAK_RATE = asFloat(leakRate);
+        LEAK_RATE = float(leakRate);
         capacity = capacity_;
         START = block.timestamp;
-    }
-
-    /// A whole number as a `Float` at exponent zero.
-    function asFloat(uint256 value) internal pure returns (Float) {
-        //forge-lint: disable-next-line(unsafe-typecast)
-        return LibDecimalFloat.packLossless(int256(value), 0);
-    }
-
-    /// A revert reason without its four byte selector, so the arguments decode.
-    function sliceReason(bytes memory reason) internal pure returns (bytes memory) {
-        bytes memory args = new bytes(reason.length - 4);
-        for (uint256 i = 0; i < args.length; i++) {
-            args[i] = reason[i + 4];
-        }
-        return args;
     }
 
     /// A mint of an arbitrary size, at whatever point in the history the fuzzer
     /// has built up to.
     function mint(uint256 amount) external {
         amount = bound(amount, 1, capacity > 0 ? capacity : 1);
-        Float amountFloat = asFloat(amount);
+        Float amountFloat = float(amount);
         Float headroomBefore = CAP.headroom(MINTER);
         Float levelBefore = CAP.level(MINTER);
 
@@ -108,7 +95,7 @@ contract LeakyBucketHandler is Test {
             assertEq(selector, LeakyBucketCapacityExceeded.selector);
             (Float reportedCapacity, Float reportedLevel, Float reportedAmount) =
                 abi.decode(sliceReason(reason), (Float, Float, Float));
-            assertTrue(reportedCapacity.eq(asFloat(capacity)));
+            assertTrue(reportedCapacity.eq(float(capacity)));
             assertTrue(reportedLevel.eq(levelBefore));
             assertTrue(reportedAmount.eq(amountFloat));
             assertTrue(CAP.level(MINTER).eq(levelBefore));
@@ -126,6 +113,6 @@ contract LeakyBucketHandler is Test {
     /// all.
     function setCapacity(uint256 capacity_) external {
         capacity = bound(capacity_, 0, capacity);
-        CAP.setPolicy(MINTER, asFloat(capacity), LEAK_RATE);
+        CAP.setPolicy(MINTER, float(capacity), LEAK_RATE);
     }
 }

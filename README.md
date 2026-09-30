@@ -4,7 +4,7 @@ A leaky bucket rate limiter for Solidity, over a struct the caller stores.
 
 Built for capping mints on a token, which is security critical and on the hot
 path of every mint, so the whole library is one file exporting one struct, three
-`internal` functions over it and five errors, with no storage, no owner and no
+`internal` functions over it and six errors, with no storage, no owner and no
 governance of its own.
 
 ## The model
@@ -132,6 +132,7 @@ It reverts, and the revert takes both stores with it, on:
 | `LeakyBucketNegativeAmount(amount)`                    | the amount is negative, which would drain the bucket and mint under a cap it never reached |
 | `LeakyBucketNegativeCapacity(capacity)`                | the capacity is negative, so no fill could ever fit                                        |
 | `LeakyBucketNegativeLeakRate(leakRate)`                | the leak rate is negative, so the bucket would fill as time passed                         |
+| `LeakyBucketAmountNotCredited(level, amount)`          | the amount fits the headroom but does not raise the level, so it would charge nothing      |
 
 The last two are checked before the amount, and the reads refuse them as well,
 so a read refuses exactly where a fill would. Every parameter in those errors is
@@ -323,16 +324,20 @@ amount far enough below the level's scale can round away against it. The rest of
 the suite fuzzes whole numbers at exponent zero inside bounds that keep every
 assertion exact — the widest product it can build is about 58 digits. What the
 hazard file adds is the other side: fills across a range of exponent gaps, from
-an amount at the level's own scale down to forty orders of magnitude under it.
-There a fill either lands or is refused, and what the file rules out is the
-third outcome, a fill accepted and reported successful that left the stored
-level exactly as it found it — a mint nothing was charged for. That comparison
-is on the packed word, so what it pins is that the level moved, not that the
-whole amount was credited; the tail can still be dropped, which is what the
-paragraph above says. A refusal is a fine answer there, and it comes from the
-arithmetic: `rain.math.float` reverts on an exponent it cannot represent rather
-than quietly replacing the value with zero, so a bucket call can revert with one
-of that library's errors as well as with one of the five above.
+an amount at the level's own scale down to eighty orders of magnitude under it.
+There a fill either lands or is refused, and the third outcome — a fill accepted
+and reported successful that left the stored level exactly as it found it, a
+mint nothing was charged for — is refused by the library rather than merely
+tested against: `fill` compares the new level to the old and reverts with
+`LeakyBucketAmountNotCredited` unless the level rose. That comparison is
+numeric, not on the packed word. What it pins is that the level moved, not that
+the whole amount was credited; the tail can still be dropped, which is what the
+paragraph above says. The boundary is exact — against a level of `1e40` the
+smallest amount still credited is `1e-27`, and `1e-28` is refused. A refusal can
+also come from the arithmetic: `rain.math.float` reverts on an exponent it
+cannot represent rather than quietly replacing the value with zero, so a bucket
+call can revert with one of that library's errors as well as with one of the six
+above.
 
 **One number has many words.** `1800e0` and `18e2` are the same number packed
 two ways, and which one an operation lands on is an artifact of the arithmetic
