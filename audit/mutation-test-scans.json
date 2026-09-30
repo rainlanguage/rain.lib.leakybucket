@@ -288,4 +288,30 @@
       "notes": "Clean pass: 18/18 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. The new guard in fill is killed by testAnAmountTooSmallToRecordIsRefused, which pins both sides of the boundary at a level of 1e40 — 1e-27 credited, 1e-28 refused by name. testsAfter is unchanged at 58 because testATinyFillIsNeverSilentlySwallowed was rewritten into testAnAmountTooSmallToRecordIsRefused rather than added alongside, and testFillsAcrossExponentGapsEitherLandOrRevert renamed to EitherRaiseOrRevert now that the strong assertion holds. First attempt at this pass reported a harness error, not a survivor: the #117 fix replaced the line M13 targeted with a named local, so the mutant stopped matching. The probe refused to score it rather than reading the miss as a kill, which is the exactly-once check doing its job; M13 retargeted at the new line and the pass re-run."
     }
   }
+,
+  {
+    "timestamp": "2026-09-30T11:05:00Z",
+    "commit": "9f55563540b37bfe8852b59b96e72f6089f10b7f",
+    "testsAfterCommit": "9f55563540b37bfe8852b59b96e72f6089f10b7f",
+    "publishedTag": "sol-v0.4.0",
+    "commitsAheadOfTag": 12,
+    "scope": "re-probe of src/lib/LibLeakyBucket.sol after two naming corrections: the private zero() helper gave way to LibDecimalFloat.FLOAT_ZERO, and the invented atLeastZero() gave way to saturatingSub(), the name sol-v0.4.0 used for the same operation via LibSaturatingMath.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 19,
+      "mutantsKilledByPreExistingSuite": 19,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 19,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 58,
+      "testsAfter": 58,
+      "coveragePRs": [
+        "#116"
+      ],
+      "filed": [],
+      "notes": "Clean pass: 19/19 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. No test changed; the count rose from 18 to 19 because centralising the subtraction into saturatingSub split the old M01 into two behaviours of the helper, min-vs-max and add-vs-sub, where before the max() call and the sub() it wrapped sat on separate lines per call site. The six mutants that named atLeastZero were retargeted at the saturatingSub spelling and the tail renumbered M09 through M19. Both mutations that remove the saturation at a single call site are still expressible and still killed: M05 drops it from elapsed and M08 from the headroom. The rename is behaviour-preserving, which is what 19/19 against an untouched suite says: the same tests that killed the atLeastZero mutants kill the saturatingSub ones, and no verdict moved. Probe integrity: green 58 baseline before the pass, byte-exact restore verified by the tool, suite run with forge test --force so no verdict was scored against a stale artifact. An earlier attempt at this pass was killed by hand partway through, roughly eight minutes in, because the saturatingSub rename was still pending and would have rewritten six of the target lines it was scoring; the working tree was restored from the commit and the pass re-run whole."
+    }
+  }
 ]
