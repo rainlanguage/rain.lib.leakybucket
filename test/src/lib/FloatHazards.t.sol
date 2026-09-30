@@ -4,7 +4,12 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
-import {LibLeakyBucket, LeakyBucket, LeakyBucketZeroAmount} from "../../../src/lib/LibLeakyBucket.sol";
+import {
+    LibLeakyBucket,
+    LeakyBucket,
+    LeakyBucketZeroAmount,
+    LeakyBucketAmountNotCredited
+} from "../../../src/lib/LibLeakyBucket.sol";
 
 /// Hazards that only exist because the bucket is `Float`, and that the fixed
 /// point suite had no way to express.
@@ -24,44 +29,39 @@ contract FloatHazardsTest is Test {
         return LeakyBucket({level: level, timestamp: f(0, 0), capacity: capacity, leakRate: f(0, 0)});
     }
 
-    /// A fill far below the level's exponent either lands or is refused. It is
-    /// never silently swallowed.
+    /// An amount too far below the level to be recorded is refused BY NAME.
     ///
     /// This is the mint-cap failure that matters: a bucket that accepts an
     /// amount, reports success, and does not move is one that mints without
-    /// charging. Whatever `Float` addition does at this exponent gap, the level
-    /// after a successful fill must differ from the level before it. The
-    /// stronger claim — that it is HIGHER — does not hold past a 68 order gap,
-    /// which is issue #117. An
-    /// earlier version asserted only that the packed word changed, which a
-    /// dropped tail can satisfy without the amount being credited.
-    function testATinyFillIsNeverSilentlySwallowed() external pure {
+    /// charging. `Float` carries about 67 exact digits, so past a gap of 68
+    /// decimal orders the amount falls off the tail of the sum. The boundary is
+    /// exact — at a level of 1e40 the last credited amount is 1e-27 and 1e-28 is
+    /// refused.
+    function testAnAmountTooSmallToRecordIsRefused() external {
         Float level = f(1, 40);
         LeakyBucket memory bucket = bucketOf(level, f(1, 60));
-        Float tiny = f(1, -40);
 
-        (Float after_,) = LibLeakyBucket.fill(bucket, f(0, 0), tiny);
-        // Word inequality, not `gt`. `gt` is the property that matters and it
-        // FAILS past a 68 order gap: see issue #117. Asserting the current
-        // behaviour would enshrine it, so this pins only that the level moved.
-        assertNotEq(Float.unwrap(after_), Float.unwrap(level), "the level did not move at all");
+        // One order inside the boundary: credited, and it raises the level.
+        (Float credited,) = LibLeakyBucket.fill(bucket, f(0, 0), f(1, -27));
+        assertTrue(credited.gt(level), "an amount inside the boundary was not credited");
+
+        // One order past it: refused rather than swallowed.
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketAmountNotCredited.selector, level, f(1, -28)));
+        this.fillExternal(bucket, f(0, 0), f(1, -28));
     }
 
-    /// The same claim across a range of gaps, so the boundary is found rather
-    /// than assumed to be beyond one hand-picked pair.
-    function testFillsAcrossExponentGapsEitherLandOrRevert(uint8 gap) external view {
+    /// Across a range of gaps: a fill either raises the level or reverts. It is
+    /// never accepted for nothing.
+    function testFillsAcrossExponentGapsEitherRaiseOrRevert(uint8 gap) external view {
         int256 exponent = -int256(uint256(bound(gap, 0, 80)));
         Float level = f(1, 40);
         LeakyBucket memory bucket = bucketOf(level, f(1, 60));
         Float amount = f(1, exponent);
 
         try this.fillExternal(bucket, f(0, 0), amount) returns (Float after_, Float) {
-            // Word inequality, not `gt`. `gt` is the property that matters and it
-            // FAILS past a 68 order gap: see issue #117. Asserting the current
-            // behaviour would enshrine it, so this pins only that the level moved.
-            assertNotEq(Float.unwrap(after_), Float.unwrap(level), "the level did not move at all");
+            assertTrue(after_.gt(level), "a fill that landed did not raise the level");
         } catch {
-            // A refusal is a fine answer. Losing the amount is not.
+            // A refusal is a fine answer. Charging nothing is not.
         }
     }
 

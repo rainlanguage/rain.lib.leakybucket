@@ -20,6 +20,10 @@ error LeakyBucketNegativeCapacity(Float capacity);
 /// `leakRate` is negative, so the bucket would fill as time passed.
 error LeakyBucketNegativeLeakRate(Float leakRate);
 
+/// `amount` fits the headroom but does not raise `level`, so accepting it would
+/// charge nothing against the capacity.
+error LeakyBucketAmountNotCredited(Float level, Float amount);
+
 /// A bucket. The caller stores it; the library never writes it.
 /// @param level The level at `timestamp`.
 /// @param timestamp When `level` was recorded.
@@ -108,7 +112,19 @@ library LibLeakyBucket {
         if (amount.gt(headroom)) {
             revert LeakyBucketCapacityExceeded(capacity, levelNow, amount);
         }
-        return levelNow.add(amount);
+        // A positive amount that leaves the level where it was has not been
+        // charged. `Float` carries about 67 exact digits, so an amount far
+        // enough below the level falls off the tail of the sum and the bucket
+        // would report a successful fill having recorded nothing — a mint under
+        // a cap it never reached.
+        //
+        // Refusing is the conservative direction: the caller is told the units
+        // are too small to account for, rather than being granted them free.
+        Float filled = levelNow.add(amount);
+        if (!filled.gt(levelNow)) {
+            revert LeakyBucketAmountNotCredited(levelNow, amount);
+        }
+        return filled;
     }
 
     /// The outstanding level at `timestamp`, leaked forward from the stored

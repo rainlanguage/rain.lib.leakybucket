@@ -133,3 +133,9 @@ file = "src/lib/LibLeakyBucket.sol"
 target = """        checkFillableDomain(bucket.capacity, bucket.leakRate);
         level = fillAt("""
 replacement = """        level = fillAt("""
+
+[[mutants]]
+name = "M18 an amount too small to be recorded is accepted and charges nothing"
+file = "src/lib/LibLeakyBucket.sol"
+target = "if (!filled.gt(levelNow)) {"
+replacement = "if (false) {"
