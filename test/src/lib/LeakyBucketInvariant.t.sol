@@ -3,25 +3,34 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
 import {LeakyBucketHandler} from "../../concrete/LeakyBucketHandler.sol";
-import {WORKED_CAPACITY, WORKED_LEAK_RATE} from "../../lib/WorkedPolicy.sol";
 
 /// The one stateful invariant run in the suite.
 contract LeakyBucketInvariantTest is Test {
-    /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`.
-    uint256 internal constant CAPACITY = WORKED_CAPACITY;
-    uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
+    using LibDecimalFloat for Float;
+
+    /// The worked policy, as whole numbers. The handler fuzzes amounts as whole
+    /// numbers at exponent zero, so the capacity and the leak rate are written
+    /// the same way and every sum below stays exact.
+    uint256 internal constant CAPACITY = 3600;
+    uint256 internal constant LEAK_RATE = 1;
 
     address internal constant ALICE = address(uint160(uint256(keccak256("alice"))));
 
     LeakyBucketMintCap internal cap;
     LeakyBucketHandler internal handler;
 
+    function asFloat(uint256 value) internal pure returns (Float) {
+        //forge-lint: disable-next-line(unsafe-typecast)
+        return LibDecimalFloat.packLossless(int256(value), 0);
+    }
+
     function setUp() external {
         vm.warp(1_700_000_000);
         cap = new LeakyBucketMintCap();
-        cap.setPolicy(ALICE, CAPACITY, LEAK_RATE);
+        cap.setPolicy(ALICE, asFloat(CAPACITY), asFloat(LEAK_RATE));
         handler = new LeakyBucketHandler(cap, ALICE, CAPACITY, LEAK_RATE);
 
         // The three selectors are named rather than left to the default, which
@@ -40,14 +49,14 @@ contract LeakyBucketInvariantTest is Test {
     /// No instant of any history offers more than the burst in force, and the
     /// burst in force is never more than the one the run started with.
     function invariant_headroomNeverExceedsCapacity() external view {
-        assertLe(cap.headroom(ALICE), handler.capacity());
-        assertLe(cap.headroom(ALICE), CAPACITY);
+        assertTrue(cap.headroom(ALICE).lte(asFloat(handler.capacity())));
+        assertTrue(cap.headroom(ALICE).lte(asFloat(CAPACITY)));
     }
 
     /// Cumulative throughput is bounded by one burst plus the sustained rate
     /// over the elapsed window, however the calls are interleaved.
     function invariant_throughputIsBoundedByBurstPlusLeak() external view {
-        assertEq(handler.minted(), cap.totalMinted());
-        assertLe(handler.minted(), CAPACITY + (block.timestamp - handler.START()) * LEAK_RATE);
+        assertTrue(asFloat(handler.minted()).eq(cap.totalMinted()));
+        assertTrue(asFloat(handler.minted()).lte(asFloat(CAPACITY + (block.timestamp - handler.START()) * LEAK_RATE)));
     }
 }

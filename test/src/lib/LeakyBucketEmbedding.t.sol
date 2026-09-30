@@ -3,122 +3,129 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
-import {
-    LibLeakyBucket,
-    LeakyBucketCapacityExceeded,
-    LeakyBucketCapacityOverflow
-} from "../../../src/lib/LibLeakyBucket.sol";
-import {WORKED_CAPACITY, WORKED_LEAK_RATE, WORKED_DRAIN} from "../../lib/WorkedPolicy.sol";
+import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
+import {workedCapacity, workedLeakRate, workedDrain, capacityOver} from "../../lib/WorkedPolicy.sol";
+import {float} from "../../lib/FloatWords.sol";
+import {LeakyBucketAsserts} from "../../abstract/LeakyBucketAsserts.sol";
 
 /// The library under a real storage layout and a real clock, which is where the
 /// mistakes that pure function tests cannot see would show up: state written
 /// back wrong, buckets bleeding into each other, a policy change landing at the
 /// wrong moment.
-contract LeakyBucketEmbeddingTest is Test {
+contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
+    using LibDecimalFloat for Float;
+
     LeakyBucketMintCap internal sCap;
 
     address internal constant ALICE = address(uint160(uint256(keccak256("alice"))));
     address internal constant BOB = address(uint160(uint256(keccak256("bob"))));
 
-    /// The worked policy the suite examines, from `test/lib/WorkedPolicy.sol`:
-    /// a 3600 unit burst at one unit per second sustained, so a full bucket
-    /// drains in exactly `DRAIN` seconds and every assertion below is exact
-    /// integer arithmetic.
-    uint256 internal constant CAPACITY = WORKED_CAPACITY;
-    uint256 internal constant LEAK_RATE = WORKED_LEAK_RATE;
-    uint256 internal constant DRAIN = WORKED_DRAIN;
+    /// The worked capacity as a plain word, so the fuzzer can draw an amount
+    /// bounded by it. Taken from the policy rather than restated beside it.
+    function capacityWord() internal pure returns (uint256) {
+        return workedCapacity().toFixedDecimalLossless(0);
+    }
+
+    /// The revert data of a mint that must not be accepted.
+    function mintRefused(LeakyBucketMintCap cap, address minter, Float amount) internal returns (bytes memory) {
+        vm.prank(minter);
+        try cap.mint(amount) {
+            revert("mint was accepted");
+        } catch (bytes memory reason) {
+            return reason;
+        }
+    }
 
     function setUp() external {
         sCap = new LeakyBucketMintCap();
-        sCap.setPolicy(ALICE, CAPACITY, LEAK_RATE);
-        sCap.setPolicy(BOB, CAPACITY, LEAK_RATE);
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate());
+        sCap.setPolicy(BOB, workedCapacity(), workedLeakRate());
         vm.warp(1_700_000_000);
     }
 
     /// An untouched minter starts with a full allowance and no stored state.
     function testUntouchedMinterStartsEmpty() external view {
-        assertEq(sCap.level(ALICE), 0);
-        assertEq(sCap.headroom(ALICE), CAPACITY);
+        assertFloatEq(sCap.level(ALICE), float(0));
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
     }
 
     /// A minter with no policy at all can mint nothing.
     function testUnconfiguredMinterCanMintNothing() external {
         address mallory = address(uint160(uint256(keccak256("mallory"))));
-        assertEq(sCap.headroom(mallory), 0);
-        vm.prank(mallory);
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, 0, 0, 1));
-        sCap.mint(1);
+        assertFloatEq(sCap.headroom(mallory), float(0));
+        assertCapacityExceeded(mintRefused(sCap, mallory, float(1)), float(0), float(0), float(1));
     }
 
     /// The burst lands, and the next unit does not.
     function testBurstToCapacityThenBlocked() external {
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
-        assertEq(sCap.level(ALICE), CAPACITY);
-        assertEq(sCap.headroom(ALICE), 0);
+        sCap.mint(workedCapacity());
+        assertFloatEq(sCap.level(ALICE), workedCapacity());
+        assertFloatEq(sCap.headroom(ALICE), float(0));
 
-        vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, CAPACITY, 1));
-        sCap.mint(1);
+        assertCapacityExceeded(mintRefused(sCap, ALICE, float(1)), workedCapacity(), workedCapacity(), float(1));
     }
 
     /// Leak is credited once per second through the write path.
     function testLeakIsCreditedOnceNotPerCall() external {
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
-        assertEq(sCap.level(ALICE), CAPACITY);
+        sCap.mint(workedCapacity());
+        assertFloatEq(sCap.level(ALICE), workedCapacity());
 
         // Half the drain time, taken in one step.
-        vm.warp(block.timestamp + DRAIN / 2);
-        assertEq(sCap.level(ALICE), CAPACITY / 2);
+        vm.warp(block.timestamp + workedDrain() / 2);
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
 
         // The same half hour a second at a time, minting exactly one second of
         // leak each second: every mint fits, and the bucket stays full.
         LeakyBucketMintCap other = new LeakyBucketMintCap();
-        other.setPolicy(BOB, CAPACITY, LEAK_RATE);
+        other.setPolicy(BOB, workedCapacity(), workedLeakRate());
         vm.warp(1_700_000_000);
         vm.prank(BOB);
-        other.mint(CAPACITY);
-        for (uint256 i = 0; i < DRAIN / 2; i++) {
+        other.mint(workedCapacity());
+        for (uint256 i = 0; i < workedDrain() / 2; i++) {
             vm.warp(block.timestamp + 1);
             vm.prank(BOB);
-            other.mint(LEAK_RATE);
+            other.mint(workedLeakRate());
         }
-        assertEq(other.level(BOB), CAPACITY);
-        assertEq(other.headroom(BOB), 0);
+        assertFloatEq(other.level(BOB), workedCapacity());
+        assertFloatEq(other.headroom(BOB), float(0));
     }
 
     /// Buckets are per minter.
     function testBucketsAreIndependentPerMinter() external {
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
+        sCap.mint(workedCapacity());
 
-        assertEq(sCap.headroom(ALICE), 0);
-        assertEq(sCap.headroom(BOB), CAPACITY);
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertFloatEq(sCap.headroom(BOB), workedCapacity());
 
         vm.prank(BOB);
-        sCap.mint(CAPACITY);
-        assertEq(sCap.headroom(BOB), 0);
+        sCap.mint(workedCapacity());
+        assertFloatEq(sCap.headroom(BOB), float(0));
     }
 
     /// Different minters can run different policies at the same time, which is
     /// the case a single shared configuration cannot express.
+    ///
+    /// A tenth of the worked leak rate is a tenth of one unit per second, which
+    /// the old fixed point scale spelled as `1e17` and a `Float` spells as
+    /// `1e-1`. The policy carries its own exponent now, so a rate below one
+    /// unit is an ordinary number rather than a scaling convention.
     function testMintersCanRunDifferentPolicies() external {
-        sCap.setPolicy(BOB, CAPACITY / 10, LEAK_RATE / 10);
+        sCap.setPolicy(BOB, capacityOver(10), workedLeakRate().div(float(10)));
 
-        assertEq(sCap.headroom(ALICE), CAPACITY);
-        assertEq(sCap.headroom(BOB), CAPACITY / 10);
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
+        assertFloatEq(sCap.headroom(BOB), capacityOver(10));
 
-        vm.prank(BOB);
-        vm.expectRevert(
-            abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY / 10, 0, CAPACITY / 10 + 1)
-        );
-        sCap.mint(CAPACITY / 10 + 1);
+        Float overByOne = capacityOver(10).add(float(1));
+        assertCapacityExceeded(mintRefused(sCap, BOB, overByOne), capacityOver(10), float(0), overByOne);
 
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
-        assertEq(sCap.totalMinted(), CAPACITY);
+        sCap.mint(workedCapacity());
+        assertFloatEq(sCap.totalMinted(), workedCapacity());
     }
 
     /// The sustained rate is what it says: an exhausted bucket recovers its
@@ -126,84 +133,86 @@ contract LeakyBucketEmbeddingTest is Test {
     /// fraction of that time.
     function testDrainsAtTheSustainedRate() external {
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
+        sCap.mint(workedCapacity());
 
-        vm.warp(block.timestamp + DRAIN / 4);
-        assertEq(sCap.headroom(ALICE), CAPACITY / 4);
+        vm.warp(block.timestamp + workedDrain() / 4);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(4));
 
-        vm.warp(block.timestamp + DRAIN / 4);
-        assertEq(sCap.headroom(ALICE), CAPACITY / 2);
+        vm.warp(block.timestamp + workedDrain() / 4);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
 
-        vm.warp(block.timestamp + DRAIN / 2);
-        assertEq(sCap.headroom(ALICE), CAPACITY);
+        vm.warp(block.timestamp + workedDrain() / 2);
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
 
         // And it stops at full rather than accruing credit for idle time.
         vm.warp(block.timestamp + 365 days);
-        assertEq(sCap.headroom(ALICE), CAPACITY);
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
     }
 
     /// A capacity cut lands the instant governance executes it, with no fill,
     /// no migration and no way for the minter to front run the drain.
     function testCapacityCutBindsImmediately() external {
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
-        vm.warp(block.timestamp + DRAIN / 2);
-        assertEq(sCap.headroom(ALICE), CAPACITY / 2);
+        sCap.mint(workedCapacity());
+        vm.warp(block.timestamp + workedDrain() / 2);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
 
         // Timelock executes: burst cut to a tenth.
-        sCap.setPolicy(ALICE, CAPACITY / 10, LEAK_RATE);
+        sCap.setPolicy(ALICE, capacityOver(10), workedLeakRate());
 
         // The outstanding level is still half the old capacity, which is five
         // times the new capacity, so nothing fits.
-        assertEq(sCap.level(ALICE), CAPACITY / 2);
-        assertEq(sCap.headroom(ALICE), 0);
-
-        vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY / 10, CAPACITY / 2, 1));
-        sCap.mint(1);
+        //
+        // Read from `sCap.level` AND off the refusal, because they came apart
+        // once: a harness deriving the level as `capacity - headroom` reported
+        // the new capacity here, since the headroom saturates at zero whenever the
+        // level is above the capacity. A cut is the only state that distinguishes
+        // the two, so it is the only place a test can hold `level` to reporting
+        // what is owed rather than what fits.
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
+        assertCapacityExceeded(mintRefused(sCap, ALICE, float(1)), capacityOver(10), capacityOver(2), float(1));
 
         // It drains under the new policy without intervention. The wait is the
         // time it takes the outstanding level to fall from half the old
         // capacity to a twentieth of it, which is the new capacity's half.
-        vm.warp(block.timestamp + DRAIN / 2 - DRAIN / 20);
-        assertEq(sCap.level(ALICE), CAPACITY / 20);
-        assertEq(sCap.headroom(ALICE), CAPACITY / 20);
+        vm.warp(block.timestamp + workedDrain() / 2 - workedDrain() / 20);
+        assertFloatEq(sCap.level(ALICE), capacityOver(20));
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(20));
     }
 
     /// The second a given amount fits again is exactly the second the leak pays
     /// for it, and not one second earlier.
     function testTheSecondAHalfCapacityFitsAgain() external {
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
+        sCap.mint(workedCapacity());
 
-        uint256 at = block.timestamp + DRAIN / 2;
+        uint256 at = block.timestamp + workedDrain() / 2;
 
         // One second early the bucket has leaked for one second less than the
         // wait, so it is exactly one second's leak short of fitting. The level
-        // and the headroom at that instant are both pinned, and the revert is
-        // matched on its full data, so this cannot pass on an arithmetic panic,
+        // and the headroom at that instant are both pinned, and the refusal is
+        // checked field by field, so this cannot pass on an arithmetic panic,
         // an out of gas, or a rejection of some other amount — which a bare
         // `vm.expectRevert()` could not tell apart from the cap binding.
-        uint256 levelJustEarly = CAPACITY - (DRAIN / 2 - 1) * LEAK_RATE;
+        Float levelJustEarly = workedCapacity().sub(float(workedDrain() / 2 - 1).mul(workedLeakRate()));
         vm.warp(at - 1);
-        assertEq(sCap.level(ALICE), levelJustEarly);
-        assertEq(sCap.headroom(ALICE), CAPACITY / 2 - LEAK_RATE);
-        vm.prank(ALICE);
-        vm.expectRevert(
-            abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, levelJustEarly, CAPACITY / 2)
+        assertFloatEq(sCap.level(ALICE), levelJustEarly);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2).sub(workedLeakRate()));
+        assertCapacityExceeded(
+            mintRefused(sCap, ALICE, capacityOver(2)), workedCapacity(), levelJustEarly, capacityOver(2)
         );
-        sCap.mint(CAPACITY / 2);
 
         // And nothing was written by the rejected attempt: at `at` the level is
         // what the leak alone makes it, and the amount that was refused a
         // second ago now fits exactly.
         vm.warp(at);
-        assertEq(sCap.level(ALICE), CAPACITY / 2);
-        assertEq(sCap.headroom(ALICE), CAPACITY / 2);
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
         vm.prank(ALICE);
-        sCap.mint(CAPACITY / 2);
-        assertEq(sCap.totalMinted(), CAPACITY + CAPACITY / 2);
-        assertEq(sCap.headroom(ALICE), 0);
+        sCap.mint(capacityOver(2));
+        assertFloatEq(sCap.totalMinted(), workedCapacity().add(capacityOver(2)));
+        assertFloatEq(sCap.headroom(ALICE), float(0));
     }
 
     /// However a minter splits its calls, and however long it waits between
@@ -212,88 +221,70 @@ contract LeakyBucketEmbeddingTest is Test {
         external
     {
         mints = uint8(bound(mints, 1, 16));
-        amount = bound(amount, 1, CAPACITY);
+        Float amountFloat = float(bound(amount, 1, capacityWord()));
 
         uint256 start = block.timestamp;
-        uint256 minted = 0;
+        Float minted = float(0);
         for (uint256 i = 0; i < mints; i++) {
             vm.warp(block.timestamp + gaps[i]);
             // The burst on offer is never larger than one capacity, no matter
             // what has happened up to here or how long the wait was.
-            uint256 headroomBefore = sCap.headroom(ALICE);
-            uint256 levelBefore = sCap.level(ALICE);
-            assertLe(headroomBefore, CAPACITY);
-            assertEq(headroomBefore, CAPACITY - levelBefore);
+            Float headroomBefore = sCap.headroom(ALICE);
+            Float levelBefore = sCap.level(ALICE);
+            assertTrue(headroomBefore.lte(workedCapacity()));
+            // Two independent reads of the same bucket: `headroomAt` saturates a
+            // subtraction from the capacity, `levelAt` leaks the stored level
+            // forward. They agree on every bucket at or under capacity, and
+            // this pins that they do.
+            assertFloatEq(headroomBefore, workedCapacity().sub(levelBefore));
 
-            if (amount <= headroomBefore) {
+            if (amountFloat.lte(headroomBefore)) {
                 // It fits, so it must land, and land exactly.
                 vm.prank(ALICE);
-                sCap.mint(amount);
-                minted += amount;
-                assertEq(sCap.level(ALICE), levelBefore + amount);
-                assertEq(sCap.headroom(ALICE), headroomBefore - amount);
+                sCap.mint(amountFloat);
+                minted = minted.add(amountFloat);
+                assertFloatEq(sCap.level(ALICE), levelBefore.add(amountFloat));
+                assertFloatEq(sCap.headroom(ALICE), headroomBefore.sub(amountFloat));
             } else {
                 // It does not fit, so it must be refused, for this reason, and
                 // leave the bucket exactly as it was.
-                vm.prank(ALICE);
-                vm.expectRevert(
-                    abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, levelBefore, amount)
+                assertCapacityExceeded(
+                    mintRefused(sCap, ALICE, amountFloat), workedCapacity(), levelBefore, amountFloat
                 );
-                sCap.mint(amount);
-                assertEq(sCap.level(ALICE), levelBefore);
-                assertEq(sCap.headroom(ALICE), headroomBefore);
+                assertFloatEq(sCap.level(ALICE), levelBefore);
+                assertFloatEq(sCap.headroom(ALICE), headroomBefore);
             }
         }
 
-        assertEq(minted, sCap.totalMinted());
-        assertLe(minted, CAPACITY + (block.timestamp - start) * LEAK_RATE);
+        assertFloatEq(minted, sCap.totalMinted());
+        assertTrue(minted.lte(workedCapacity().add(float(block.timestamp - start).mul(workedLeakRate()))));
     }
 
     /// A clock that steps backwards banks no credit, through real storage.
     function testBackwardsClockBanksNoCredit() external {
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
-        assertEq(sCap.level(ALICE), CAPACITY);
+        sCap.mint(workedCapacity());
+        assertFloatEq(sCap.level(ALICE), workedCapacity());
 
         uint256 filled = block.timestamp;
 
         // The clock falls back an hour and the bucket still reads full.
-        vm.warp(filled - DRAIN);
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, CAPACITY, CAPACITY, 1));
-        vm.prank(ALICE);
-        sCap.mint(1);
+        vm.warp(filled - workedDrain());
+        assertCapacityExceeded(mintRefused(sCap, ALICE, float(1)), workedCapacity(), workedCapacity(), float(1));
 
         // Back at the second of the original mint the bucket is still full.
         // The hour the clock claimed to rewind bought nothing: without the
         // guard the stored checkpoint would have moved back with it and this
         // would read as an empty bucket with a whole capacity on offer.
         vm.warp(filled);
-        assertEq(sCap.level(ALICE), CAPACITY);
-        assertEq(sCap.headroom(ALICE), 0);
+        assertFloatEq(sCap.level(ALICE), workedCapacity());
+        assertFloatEq(sCap.headroom(ALICE), float(0));
 
         // And one real hour later it is one capacity, not two hours of leak.
-        vm.warp(filled + DRAIN);
-        assertEq(sCap.headroom(ALICE), CAPACITY);
+        vm.warp(filled + workedDrain());
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
         vm.prank(ALICE);
-        sCap.mint(CAPACITY);
-        assertEq(sCap.totalMinted(), CAPACITY * 2);
-    }
-
-    /// A capacity wider than the packed level field is refused where governance
-    /// sets it, rather than discovered at mint time by whoever is unlucky
-    /// enough to be minting when it first binds.
-    function testGovernanceCannotSetAnUnenforceableCapacity() external {
-        uint256 capacity = LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX + 1;
-
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
-        sCap.setPolicy(ALICE, capacity, LEAK_RATE);
-
-        // ALICE keeps the policy she had, so a refused change is inert rather
-        // than half applied.
-        assertEq(sCap.headroom(ALICE), CAPACITY);
-
-        // The widest capacity the library can store is settable and binds.
-        sCap.setPolicy(BOB, LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX, LEAK_RATE);
-        assertEq(sCap.headroom(BOB), LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX);
+        sCap.mint(workedCapacity());
+        assertFloatEq(sCap.totalMinted(), workedCapacity().mul(float(2)));
     }
 }

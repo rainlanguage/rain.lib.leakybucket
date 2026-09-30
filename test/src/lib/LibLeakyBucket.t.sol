@@ -3,91 +3,139 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {
-    LeakyBucketZeroAmount,
-    LibLeakyBucket,
     LeakyBucket,
     LeakyBucketCapacityExceeded,
-    LeakyBucketCapacityOverflow,
-    LeakyBucketLevelOverflow,
-    LeakyBucketTimestampOverflow
+    LeakyBucketNegativeAmount,
+    LeakyBucketNegativeCapacity,
+    LeakyBucketNegativeLeakRate,
+    LeakyBucketZeroAmount,
+    LibLeakyBucket
 } from "../../../src/lib/LibLeakyBucket.sol";
 import {LibLeakyBucketSlow} from "../../lib/LibLeakyBucketSlow.sol";
-import {LibCheckpointWord} from "../../lib/LibCheckpointWord.sol";
-import {LeakyBucketScratch} from "../../abstract/LeakyBucketScratch.sol";
+import {workedCapacity, workedDrain, workedLeakRate} from "../../lib/WorkedPolicy.sol";
+import {LeakyBucketAsserts} from "../../abstract/LeakyBucketAsserts.sol";
+import {float, signedFloat} from "../../lib/FloatWords.sol";
 
 /// Properties of the bucket itself, stated as invariants over the whole input
 /// space rather than as a table of worked examples.
-contract LibLeakyBucketTest is Test, LeakyBucketScratch {
+contract LibLeakyBucketTest is LeakyBucketAsserts {
+    using LibDecimalFloat for Float;
+
     // ---------------------------------------------------------------- //
     //                              The leak                             //
     // ---------------------------------------------------------------- //
 
     /// Leaking can only ever lower the level, at every input.
-    function testLeakNeverRaisesLevel(uint192 level, uint64 checkpoint, uint64 timestamp, uint256 leakRate)
+    function testLeakNeverRaisesLevel(uint256 level, uint256 checkpoint, uint256 timestamp, uint256 leakRate)
         external
         pure
     {
-        assertLe(levelAt(LibCheckpointWord.packed(level, checkpoint), timestamp, leakRate), level);
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        assertFloatLe(
+            levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity()), float(level)
+        );
     }
 
     /// A zero rate is a bucket that does not drain, forever.
-    function testLeakRateZeroNeverLeaks(uint192 level, uint64 checkpoint, uint64 timestamp) external pure {
-        assertEq(levelAt(LibCheckpointWord.packed(level, checkpoint), timestamp, 0), level);
+    function testLeakRateZeroNeverLeaks(uint256 level, uint256 checkpoint, uint256 timestamp) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        assertFloatEq(
+            levelAt(float(level), float(checkpoint), float(timestamp), float(0), probeCapacity()), float(level)
+        );
     }
 
     /// No time, no leak.
-    function testLeakZeroElapsedNeverLeaks(uint192 level, uint64 checkpoint, uint256 leakRate) external pure {
-        assertEq(levelAt(LibCheckpointWord.packed(level, checkpoint), checkpoint, leakRate), level);
+    function testLeakZeroElapsedNeverLeaks(uint256 level, uint256 checkpoint, uint256 leakRate) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        assertFloatEq(
+            levelAt(float(level), float(checkpoint), float(checkpoint), float(leakRate), probeCapacity()), float(level)
+        );
     }
 
-    /// Where the product cannot overflow the leak is exactly `elapsed * rate`,
-    /// floored at empty.
-    function testLeakIsExactWhereItCannotOverflow(uint128 level, uint64 elapsed, uint64 leakRate) external pure {
-        uint256 leaked = uint256(elapsed) * uint256(leakRate);
-        assertEq(levelAt(LibCheckpointWord.packed(level, 0), elapsed, leakRate), leaked < level ? level - leaked : 0);
+    /// The leak is exactly `elapsed * rate`, floored at empty.
+    ///
+    /// The old claim was hedged with "where the product cannot overflow",
+    /// because a `uint256` product of a 64 bit elapsed and a 256 bit rate could.
+    /// A `Float` product cannot, so within the precision bounds above the claim
+    /// is unconditional.
+    function testLeakIsExact(uint256 level, uint256 elapsed, uint256 leakRate) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        elapsed = bound(elapsed, 0, MAX_TIME);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        uint256 leaked = elapsed * leakRate;
+        assertFloatEq(
+            levelAt(float(level), float(0), float(elapsed), float(leakRate), probeCapacity()),
+            leaked < level ? float(level - leaked) : float(0)
+        );
     }
 
-    /// An overflowing product is a leak larger than any representable level, so
-    /// the bucket reads empty, and empty is the exact answer here rather than a
-    /// conservative one.
-    function testLeakOverflowingProductEmptiesBucket(uint192 level, uint64 elapsed, uint256 leakRate) external pure {
-        elapsed = uint64(bound(elapsed, 1 << 32, type(uint64).max));
-        leakRate = bound(leakRate, 1 << 224, type(uint256).max);
-        assertEq(levelAt(LibCheckpointWord.packed(level, 0), elapsed, leakRate), 0);
+    /// A leak larger than the level empties the bucket, and empty is the exact
+    /// answer here rather than a conservative one.
+    ///
+    /// The old bucket reached this case by overflowing the product, which was a
+    /// leak wider than any representable level and so saturated. There is no
+    /// width to overflow now; what is left is `saturatingSub` at zero, which is the
+    /// property the bucket actually has.
+    function testLeakLargerThanTheLevelEmptiesBucket(uint256 level, uint256 extra, uint256 leakRate) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 1, MAX_LEAK_RATE);
+        // Long enough at this rate to have leaked past whatever the level was.
+        uint256 elapsed = level / leakRate + 1 + bound(extra, 0, MAX_TIME);
+        assertFloatEq(levelAt(float(level), float(0), float(elapsed), float(leakRate), probeCapacity()), float(0));
     }
 
-    /// The closed form agrees with draining one second at a time, everywhere
-    /// the loop is affordable to run.
-    function testLeakAgainstUnitSteps(uint192 level, uint64 elapsed, uint256 leakRate) external pure {
-        elapsed = uint64(bound(elapsed, 0, 512));
-        leakRate = bound(leakRate, 0, type(uint128).max);
-        assertEq(
-            levelAt(LibCheckpointWord.packed(level, 0), elapsed, leakRate),
-            LibLeakyBucketSlow.leakSlow(level, elapsed, leakRate)
+    /// The closed form agrees with draining one unit of time at a time,
+    /// everywhere the loop is affordable to run.
+    function testLeakAgainstUnitSteps(uint256 level, uint256 elapsed, uint256 leakRate) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        elapsed = bound(elapsed, 0, 512);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        assertFloatEq(
+            levelAt(float(level), float(0), float(elapsed), float(leakRate), probeCapacity()),
+            LibLeakyBucketSlow.leakSlow(float(level), elapsed, float(leakRate))
         );
     }
 
     /// A clock at or behind the checkpoint credits no leak.
-    function testBackwardsClockCreditsNoLeak(uint192 level, uint64 checkpoint, uint64 timestamp, uint256 leakRate)
+    function testBackwardsClockCreditsNoLeak(uint256 level, uint256 checkpoint, uint256 timestamp, uint256 leakRate)
         external
         pure
     {
-        timestamp = uint64(bound(timestamp, 0, checkpoint));
-        assertEq(levelAt(LibCheckpointWord.packed(level, checkpoint), timestamp, leakRate), level);
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, checkpoint);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        assertFloatEq(
+            levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity()), float(level)
+        );
     }
 
     /// Later never reads fuller.
     function testLevelIsMonotonicInTime(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 earlier,
-        uint64 later,
+        uint256 level,
+        uint256 checkpoint,
+        uint256 earlier,
+        uint256 later,
         uint256 leakRate
     ) external pure {
-        later = uint64(bound(later, earlier, type(uint64).max));
-        uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
-        assertLe(levelAt(checkpointWord, later, leakRate), levelAt(checkpointWord, earlier, leakRate));
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        earlier = bound(earlier, 0, MAX_TIME);
+        later = bound(later, earlier, MAX_TIME);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        assertFloatLe(
+            levelAt(float(level), float(checkpoint), float(later), float(leakRate), probeCapacity()),
+            levelAt(float(level), float(checkpoint), float(earlier), float(leakRate), probeCapacity())
+        );
     }
 
     // ---------------------------------------------------------------- //
@@ -95,501 +143,665 @@ contract LibLeakyBucketTest is Test, LeakyBucketScratch {
     // ---------------------------------------------------------------- //
 
     /// Headroom is capacity minus the level, floored at zero, so it is never
-    /// more than the capacity and never underflows when the level is above it.
-    function testHeadroomNeverExceedsCapacity(uint256 checkpoint, uint64 timestamp, uint192 capacity, uint256 leakRate)
-        external
-        pure
-    {
-        assertLe(headroomAt(checkpoint, timestamp, capacity, leakRate), capacity);
+    /// more than the capacity and never goes negative when the level is above
+    /// it.
+    function testHeadroomNeverExceedsCapacity(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
+        uint256 leakRate
+    ) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        assertFloatLe(
+            headroomAt(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate)),
+            float(capacity)
+        );
     }
 
     /// Whatever `headroomAt` reports is a fill `fill` takes IN FULL, at every
     /// input it will answer at all; a zero headroom is a zero fill, refused.
     function testHeadroomIsAlwaysFillable(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 timestamp,
-        uint192 capacity,
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
         uint256 leakRate
     ) external {
-        uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
-        uint256 levelNow = levelAt(checkpointWord, timestamp, leakRate);
-        uint256 headroom = headroomAt(checkpointWord, timestamp, capacity, leakRate);
-        if (headroom == 0) {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+
+        Float levelNow = levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity());
+        Float headroom = headroomAt(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate));
+        if (headroom.isZero()) {
             vm.expectRevert(abi.encodeWithSelector(LeakyBucketZeroAmount.selector));
-            this.externalFill(checkpointWord, timestamp, capacity, leakRate, 0);
+            this.externalFill(
+                float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(0)
+            );
             return;
         }
 
-        uint256 newLevel = LibCheckpointWord.storedLevel(fill(checkpointWord, timestamp, capacity, leakRate, headroom));
+        (Float newLevel,) =
+            fill(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), headroom);
 
-        // The fill was taken in full, not silently dropped or clamped.
-        assertEq(newLevel, levelNow + headroom);
+        // The fill was taken in full, not silently dropped or saturated.
+        assertFloatEq(newLevel, levelNow.add(headroom));
         // And it lands exactly at the capacity, unless the bucket was already
         // above it, in which case the only headroom on offer was zero.
-        assertEq(newLevel, levelNow > capacity ? levelNow : capacity);
+        assertFloatEq(newLevel, levelNow.gt(float(capacity)) ? levelNow : float(capacity));
     }
 
     /// The other half: one unit past the reported headroom is always rejected,
     /// with the capacity that was in force, the level at that second and the
     /// amount that did not fit.
     function testFillRejectsOneUnitPastTheHeadroom(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 timestamp,
-        uint192 capacity,
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
         uint256 leakRate
-    ) external {
-        uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
-        uint256 levelNow = levelAt(checkpointWord, timestamp, leakRate);
-        uint256 headroom = headroomAt(checkpointWord, timestamp, capacity, leakRate);
+    ) external view {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
 
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, levelNow, headroom + 1));
-        this.externalFill(checkpointWord, timestamp, capacity, leakRate, headroom + 1);
+        // Every level here is a whole number, so the headroom is one too and
+        // converts back to a word that "one more" can be counted on.
+        uint256 amount = headroomAt(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate))
+            .toFixedDecimalLossless(0) + 1;
+
+        assertCapacityExceeded(
+            fillRefused(
+                float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(amount)
+            ),
+            float(capacity),
+            levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity()),
+            float(amount)
+        );
     }
 
     /// Filling over the headroom reverts with the same error whatever the
     /// overshoot, and nothing is written.
     function testFillRevertsOverHeadroom(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 timestamp,
-        uint192 capacity,
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
         uint256 leakRate,
         uint256 amount
-    ) external {
-        uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
-        uint256 levelNow = levelAt(checkpointWord, timestamp, leakRate);
-        uint256 headroom = headroomAt(checkpointWord, timestamp, capacity, leakRate);
-        amount = bound(amount, headroom + 1, type(uint256).max);
+    ) external view {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
 
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, levelNow, amount));
-        this.externalFill(checkpointWord, timestamp, capacity, leakRate, amount);
+        uint256 headroom = headroomAt(
+                float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate)
+            ).toFixedDecimalLossless(0);
+        amount = bound(amount, headroom + 1, headroom + 1 + MAX_LEVEL);
+
+        assertCapacityExceeded(
+            fillRefused(
+                float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(amount)
+            ),
+            float(capacity),
+            levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity()),
+            float(amount)
+        );
     }
 
     /// A zero fill is refused at every level.
     function testFillRejectsZeroAmount(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 timestamp,
-        uint192 capacity,
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
         uint256 leakRate
     ) external {
-        uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketZeroAmount.selector));
-        this.externalFill(checkpointWord, timestamp, capacity, leakRate, 0);
+        this.externalFill(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(0));
+    }
+
+    /// A negative fill is refused at every level, BY NAME.
+    ///
+    /// The old library had no such case: an amount was a `uint256` and the type
+    /// carried the sign. It is a `Float` now, so a fill that drains the bucket
+    /// — and so mints under a cap it never reached — is expressible, and is
+    /// rejected rather than applied.
+    function testFillRejectsANegativeAmount(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
+        uint256 leakRate,
+        int256 amount
+    ) external {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        Float amountFloat = signedFloat(bound(amount, -MAX_SIGNED, -1));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeAmount.selector, amountFloat));
+        this.externalFill(
+            float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), amountFloat
+        );
     }
 
     /// Lowering capacity under an outstanding level needs no migration and no
     /// fill to take effect.
-    function testCapacityLoweredBelowLevelBindsImmediatelyThenDrains() external {
-        uint256 leakRate = 1e18;
-        uint64 checkpoint = 1000;
-        uint256 checkpointWord = LibCheckpointWord.packed(100e18, checkpoint);
+    function testCapacityLoweredBelowLevelBindsImmediatelyThenDrains() external view {
+        Float leakRate = float(1);
+        Float checkpoint = float(1000);
+        Float level = float(100);
 
         // Capacity cut to a quarter of what is already outstanding.
-        uint256 capacity = 25e18;
+        Float capacity = float(25);
 
-        assertEq(headroomAt(checkpointWord, checkpoint, capacity, leakRate), 0);
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, 100e18, 1));
-        this.externalFill(checkpointWord, checkpoint, capacity, leakRate, 1);
+        assertFloatEq(headroomAt(level, checkpoint, checkpoint, capacity, leakRate), float(0));
+        assertCapacityExceeded(
+            fillRefused(level, checkpoint, checkpoint, capacity, leakRate, float(1)), capacity, level, float(1)
+        );
 
         // Still bound most of the way down.
-        assertEq(headroomAt(checkpointWord, checkpoint + 74, capacity, leakRate), 0);
+        assertFloatEq(headroomAt(level, checkpoint, float(1000 + 74), capacity, leakRate), float(0));
 
-        // 75 seconds at 1e18/s leaks 75e18, reaching the new capacity exactly.
-        assertEq(levelAt(checkpointWord, checkpoint + 75, leakRate), 25e18);
-        assertEq(headroomAt(checkpointWord, checkpoint + 75, capacity, leakRate), 0);
+        // 75 units of time at one per unit leaks 75, reaching the new capacity
+        // exactly.
+        assertFloatEq(levelAt(level, checkpoint, float(1000 + 75), leakRate, probeCapacity()), float(25));
+        assertFloatEq(headroomAt(level, checkpoint, float(1000 + 75), capacity, leakRate), float(0));
 
         // And from there it behaves as an ordinary bucket at the new capacity.
-        assertEq(headroomAt(checkpointWord, checkpoint + 85, capacity, leakRate), 10e18);
-        assertEq(LibCheckpointWord.storedLevel(fill(checkpointWord, checkpoint + 85, capacity, leakRate, 10e18)), 25e18);
+        assertFloatEq(headroomAt(level, checkpoint, float(1000 + 85), capacity, leakRate), float(10));
+        (Float newLevel,) = fill(level, checkpoint, float(1000 + 85), capacity, leakRate, float(10));
+        assertFloatEq(newLevel, float(25));
     }
 
     /// The security property on a worked policy: every burst is capped at the
     /// capacity, including the ones that come after a full drain.
-    function testEachRepeatBurstIsCappedAtCapacity() external {
-        uint256 capacity = 3600e18;
-        // One unit per second, so a full bucket drains in exactly an hour.
-        uint256 leakRate = 1e18;
-        uint64 t0 = 1_700_000_000;
+    function testEachRepeatBurstIsCappedAtCapacity() external view {
+        Float t0 = float(1_700_000_000);
 
         // Burst the whole capacity at once out of an empty bucket.
-        uint256 filled = fill(LibCheckpointWord.packed(0, t0), t0, capacity, leakRate, capacity);
-        assertEq(LibCheckpointWord.storedLevel(filled), capacity);
+        (Float level, Float checkpoint) = fill(float(0), t0, t0, workedCapacity(), workedLeakRate(), workedCapacity());
+        assertFloatEq(level, workedCapacity());
 
         // Immediately after, nothing more fits.
-        assertEq(headroomAt(filled, t0, capacity, leakRate), 0);
+        assertFloatEq(headroomAt(level, checkpoint, t0, workedCapacity(), workedLeakRate()), float(0));
 
         // The drain time for a full bucket, and the first moment it is empty.
-        // Bounded by the fuzz bounds above, which keep the quotient far inside
-        // 64 bits, so this narrowing cannot truncate.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint64 drain = uint64(capacity / leakRate);
-        assertEq(levelAt(filled, t0 + drain, leakRate), capacity % leakRate);
+        // The worked leak rate divides the worked capacity exactly, so there is
+        // no remainder left standing at that moment.
+        Float drained = float(1_700_000_000 + workedDrain());
+        assertFloatEq(levelAt(level, checkpoint, drained, workedLeakRate(), probeCapacity()), float(0));
 
         // A second burst lands, so `2 * capacity` crossed in one drain window.
-        uint256 refilled = fill(filled, t0 + drain + 1, capacity, leakRate, capacity);
-        assertEq(LibCheckpointWord.storedLevel(refilled), capacity);
+        Float next = float(1_700_000_000 + workedDrain() + 1);
+        (Float refilled, Float refilledAt) =
+            fill(level, checkpoint, next, workedCapacity(), workedLeakRate(), workedCapacity());
+        assertFloatEq(refilled, workedCapacity());
 
         // And no third burst: the bound is `capacity + elapsed * leakRate`.
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, capacity, 1));
-        this.externalFill(refilled, t0 + drain + 1, capacity, leakRate, 1);
+        assertCapacityExceeded(
+            fillRefused(refilled, refilledAt, next, workedCapacity(), workedLeakRate(), float(1)),
+            workedCapacity(),
+            workedCapacity(),
+            float(1)
+        );
     }
 
     // ---------------------------------------------------------------- //
-    //                        The word that is stored                    //
+    //                  The level and the checkpoint back                //
     // ---------------------------------------------------------------- //
 
-    /// The property the packing exists for: a successful fill returns a word
-    /// that carries the new level *and* a timestamp that level actually belongs
-    /// to.
+    /// The property the second return exists for: a successful fill hands back
+    /// the new level *and* a timestamp that level actually belongs to.
+    ///
+    /// The old library packed the two into one word and this was the property
+    /// the packing existed for. The word is gone and the pair is not, so the
+    /// claim outlives the layout that used to carry it.
     function testFillCarriesTheTimestampWithTheLevel(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 timestamp,
-        uint192 capacity,
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
         uint256 leakRate,
         uint256 amount
     ) external pure {
-        uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
-        uint256 headroom = headroomAt(checkpointWord, timestamp, capacity, leakRate);
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+
+        uint256 headroom = headroomAt(
+                float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate)
+            ).toFixedDecimalLossless(0);
         vm.assume(headroom > 0);
         amount = bound(amount, 1, headroom);
 
-        uint256 result = fill(checkpointWord, timestamp, capacity, leakRate, amount);
-        uint256 newLevel = LibCheckpointWord.storedLevel(result);
-        uint256 newTimestamp = LibCheckpointWord.storedTimestamp(result);
+        (Float newLevel, Float newTimestamp) =
+            fill(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(amount));
 
-        assertGe(newTimestamp, checkpoint);
-        assertGe(newTimestamp, timestamp);
-        assertLe(newTimestamp, timestamp > checkpoint ? timestamp : checkpoint);
+        assertFloatGe(newTimestamp, float(checkpoint));
+        assertFloatGe(newTimestamp, float(timestamp));
+        assertFloatLe(newTimestamp, float(timestamp > checkpoint ? timestamp : checkpoint));
 
-        assertEq(newLevel, levelAt(checkpointWord, newTimestamp, leakRate) + amount);
+        assertFloatEq(
+            newLevel,
+            levelAt(float(level), float(checkpoint), newTimestamp, float(leakRate), probeCapacity()).add(float(amount))
+        );
     }
 
-    /// `fill` returns the new checkpoint and touches nothing it was handed.
+    /// `fill` returns the new level and checkpoint, and touches nothing it was
+    /// handed.
     function testFillMutatesNothingItIsHanded(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 timestamp,
-        uint192 capacity,
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
         uint256 leakRate,
         uint256 amount
     ) external pure {
-        uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
-        uint256 headroom = headroomAt(checkpointWord, timestamp, capacity, leakRate);
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+
+        uint256 headroom = headroomAt(
+                float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate)
+            ).toFixedDecimalLossless(0);
         vm.assume(headroom > 0);
         amount = bound(amount, 1, headroom);
 
-        LeakyBucket memory handed = bucket(checkpointWord, capacity, leakRate);
-        LibLeakyBucket.fill(handed, timestamp, amount);
+        LeakyBucket memory handed = bucket(float(level), float(checkpoint), float(capacity), float(leakRate));
+        LibLeakyBucket.fill(handed, float(timestamp), float(amount));
 
-        assertEq(handed.checkpoint, checkpointWord);
-        assertEq(handed.capacity, capacity);
-        assertEq(handed.leakRate, leakRate);
+        // Bit for bit, not number for number: a field rewritten to another
+        // spelling of the same number is still a field that was written.
+        assertEq(Float.unwrap(handed.level), Float.unwrap(float(level)), "level");
+        assertEq(Float.unwrap(handed.timestamp), Float.unwrap(float(checkpoint)), "timestamp");
+        assertEq(Float.unwrap(handed.capacity), Float.unwrap(float(capacity)), "capacity");
+        assertEq(Float.unwrap(handed.leakRate), Float.unwrap(float(leakRate)), "leakRate");
     }
 
-    /// The layout is the level in the high bits and the timestamp in the low
-    /// ones, stated as values rather than left to the library.
-    function testLayoutIsLevelHighTimestampLow() external pure {
-        assertEq(LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX, type(uint192).max);
-        assertEq(LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX, type(uint256).max >> LibCheckpointWord.TIMESTAMP_BITS);
-
-        // One unit in the level field is one unit above the timestamp field,
-        // and one second is the lowest bit of the word. A zero rate keeps the
-        // leak out of it, so what comes back is the packing and nothing else.
-        assertEq(fill(0, 0, type(uint192).max, 0, 1), uint256(1) << LibCheckpointWord.TIMESTAMP_BITS);
-        assertEq(fill(0, 1, type(uint192).max, 0, 1), (uint256(1) << LibCheckpointWord.TIMESTAMP_BITS) | 1);
-
-        // And the two fields tile the word exactly: no gap, no overlap. The
-        // widest level at the last recordable second is every bit set.
-        assertEq(fill(0, type(uint64).max, type(uint192).max, 0, type(uint192).max), type(uint256).max);
-    }
-
-    /// A zero word is an empty bucket checkpointed at the epoch, so an
+    /// A zeroed bucket is an empty bucket checkpointed at the epoch, so an
     /// untouched slot needs no initializer.
-    function testZeroWordIsEmptyAtEpoch() external pure {
-        assertEq(LibCheckpointWord.storedLevel(0), 0);
-        assertEq(LibCheckpointWord.storedTimestamp(0), 0);
-        assertEq(levelAt(0, 0, 1e18), 0);
-        assertEq(headroomAt(0, 0, 3600e18, 1e18), 3600e18);
+    ///
+    /// The old form of this was about a zero WORD, because the level and the
+    /// timestamp shared one. They are separate fields now and the claim is the
+    /// same for each: the zero `Float` is the number zero, so a slot that was
+    /// never written reads as empty at the epoch rather than as nonsense.
+    function testZeroBucketIsEmptyAtEpoch() external pure {
+        LeakyBucket memory untouched;
+        assertEq(Float.unwrap(untouched.level), bytes32(0), "level");
+        assertEq(Float.unwrap(untouched.timestamp), bytes32(0), "timestamp");
+        assertFloatEq(untouched.level, float(0));
+        assertFloatEq(untouched.timestamp, float(0));
+
+        assertFloatEq(
+            levelAt(untouched.level, untouched.timestamp, float(0), workedLeakRate(), probeCapacity()), float(0)
+        );
+        assertFloatEq(
+            headroomAt(untouched.level, untouched.timestamp, float(0), workedCapacity(), workedLeakRate()),
+            workedCapacity()
+        );
     }
 
-    /// Reading a checkpoint is total: every word in the space is some valid
-    /// bucket, so a slot holding arbitrary bits reads as one rather than
-    /// reverting.
-    function testEveryWordReadsAsABucket(uint256 checkpoint, uint64 timestamp, uint192 capacity, uint256 leakRate)
-        external
-        pure
-    {
-        headroomAt(checkpoint, timestamp, capacity, leakRate);
-    }
-
-    /// The fields do not bleed into each other.
-    function testFieldsDoNotAlias(uint192 level, uint64 timestamp, uint192 otherLevel, uint64 otherTimestamp)
-        external
-        pure
-    {
-        // Moving the level across its whole range never moves the timestamp.
-        // A fill of one unit rewrites the word, so the timestamp that comes
-        // back is the one that went in whatever the level beside it was.
-        level = uint192(bound(level, 0, type(uint192).max - 1));
-        otherLevel = uint192(bound(otherLevel, 0, type(uint192).max - 1));
-        assertEq(
-            LibCheckpointWord.storedTimestamp(
-                fill(LibCheckpointWord.packed(level, timestamp), timestamp, type(uint192).max, 0, 1)
-            ),
-            timestamp
-        );
-        assertEq(
-            LibCheckpointWord.storedTimestamp(
-                fill(LibCheckpointWord.packed(otherLevel, timestamp), timestamp, type(uint192).max, 0, 1)
-            ),
-            timestamp
-        );
-
-        // And moving the timestamp across its whole range never moves the
-        // level.
-        assertEq(levelAt(LibCheckpointWord.packed(level, timestamp), timestamp, 0), level);
-        assertEq(levelAt(LibCheckpointWord.packed(level, otherTimestamp), otherTimestamp, 0), level);
+    /// Reading a bucket is total on the fillable domain: whatever the level and
+    /// whatever the clock says, a non-negative capacity and leak rate answer
+    /// rather than revert.
+    ///
+    /// The old claim was about bits — every 256 bit word was some valid bucket,
+    /// so a slot holding arbitrary bits read as one. A bucket is four `Float`s
+    /// now rather than a word, and the two fields that can be meaningless are
+    /// refused BY NAME instead of read, which
+    /// `testEntryPointsAnswerOnExactlyTheFillableDomain` pins. What is left of
+    /// the old claim is this: inside that domain there is nothing else to
+    /// refuse.
+    function testEveryBucketInTheDomainReads(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
+        uint256 leakRate
+    ) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        headroomAt(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate));
     }
 
     /// A fill at a timestamp *behind* the stored checkpoint must not move the
     /// checkpoint back to it.
     function testFillBehindTheCheckpointGrantsNoHeadroom() external pure {
-        uint256 capacity = 3600e18;
-        uint256 leakRate = 1e18;
-
-        uint256 nearlyFull = fill(0, 1000, capacity, leakRate, capacity - 1e18);
-        assertEq(LibCheckpointWord.storedLevel(nearlyFull), 3599e18);
-        assertEq(LibCheckpointWord.storedTimestamp(nearlyFull), 1000);
+        (Float nearlyFull, Float nearlyFullAt) =
+            fill(float(0), float(0), float(1000), workedCapacity(), workedLeakRate(), float(3599));
+        assertFloatEq(nearlyFull, float(3599));
+        assertFloatEq(nearlyFullAt, float(1000));
 
         // The last unit goes in at a clock behind the checkpoint: the level
         // moves, the checkpoint stays at 1000.
-        uint256 backwards = fill(nearlyFull, 500, capacity, leakRate, 1e18);
-        assertEq(LibCheckpointWord.storedLevel(backwards), 3600e18);
-        assertEq(LibCheckpointWord.storedTimestamp(backwards), 1000);
+        (Float backwards, Float backwardsAt) =
+            fill(nearlyFull, nearlyFullAt, float(500), workedCapacity(), workedLeakRate(), float(1));
+        assertFloatEq(backwards, float(3600));
+        assertFloatEq(backwardsAt, float(1000));
 
-        uint256 full = fill(0, 1000, capacity, leakRate, capacity);
-        assertEq(headroomAt(backwards, 1001, capacity, leakRate), 1e18);
-        assertEq(headroomAt(backwards, 1001, capacity, leakRate), headroomAt(full, 1001, capacity, leakRate));
+        (Float full, Float fullAt) =
+            fill(float(0), float(0), float(1000), workedCapacity(), workedLeakRate(), workedCapacity());
+        assertFloatEq(headroomAt(backwards, backwardsAt, float(1001), workedCapacity(), workedLeakRate()), float(1));
+        assertFloatEq(
+            headroomAt(backwards, backwardsAt, float(1001), workedCapacity(), workedLeakRate()),
+            headroomAt(full, fullAt, float(1001), workedCapacity(), workedLeakRate())
+        );
     }
 
     /// The general form of the case above.
     function testFillBehindTheCheckpointIsNotObservable(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 behind,
-        uint192 capacity,
+        uint256 level,
+        uint256 checkpoint,
+        uint256 behind,
+        uint256 capacity,
         uint256 leakRate,
-        uint64 later
+        uint256 later
     ) external pure {
-        behind = uint64(bound(behind, 0, checkpoint));
-        later = uint64(bound(later, checkpoint, type(uint64).max));
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        behind = bound(behind, 0, checkpoint);
+        later = bound(later, checkpoint, MAX_TIME);
+        capacity = bound(capacity, 1, MAX_LEVEL);
+        level = bound(level, 0, capacity - 1);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
 
-        vm.assume(capacity > level);
-        uint256 filled = fill(LibCheckpointWord.packed(level, checkpoint), behind, capacity, leakRate, 1);
+        (Float filled, Float filledAt) =
+            fill(float(level), float(checkpoint), float(behind), float(capacity), float(leakRate), float(1));
         // One unit filled at `behind` is one unit on the level at `checkpoint`.
-        uint256 expected = LibCheckpointWord.packed(level + 1, checkpoint);
-
-        assertEq(levelAt(filled, later, leakRate), levelAt(expected, later, leakRate));
-        assertEq(headroomAt(filled, later, capacity, leakRate), headroomAt(expected, later, capacity, leakRate));
+        assertFloatEq(
+            levelAt(filled, filledAt, float(later), float(leakRate), probeCapacity()),
+            levelAt(float(level + 1), float(checkpoint), float(later), float(leakRate), probeCapacity())
+        );
+        assertFloatEq(
+            headroomAt(filled, filledAt, float(later), float(capacity), float(leakRate)),
+            headroomAt(float(level + 1), float(checkpoint), float(later), float(capacity), float(leakRate))
+        );
     }
 
     /// The headline property of the leak, through the write path, which is the
     /// only path there is.
     function testFillThroughACheckpointHasNoDrift(
-        uint192 capacity,
+        uint256 capacity,
         uint256 leakRate,
-        uint64 t0,
-        uint64 gapA,
-        uint64 gapB
+        uint256 t0,
+        uint256 gapA,
+        uint256 gapB
     ) external pure {
-        leakRate = bound(leakRate, 0, type(uint128).max);
-        uint64 t1 = uint64(bound(gapA, 0, type(uint64).max - t0)) + t0;
-        uint64 t2 = uint64(bound(gapB, 0, type(uint64).max - t1)) + t1;
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        t0 = bound(t0, 0, MAX_TIME);
+        uint256 t1 = bound(gapA, 0, MAX_TIME - t0) + t0;
+        uint256 t2 = bound(gapB, 0, MAX_TIME - t1) + t1;
 
-        capacity = uint192(bound(capacity, 1, type(uint192).max));
-        uint256 start = LibCheckpointWord.packed(capacity - 1, t0);
+        capacity = bound(capacity, 1, MAX_LEVEL);
 
         // A hand-built checkpoint of the level at t1 plus one unit.
-        uint256 direct = levelAt(LibCheckpointWord.packed(uint192(levelAt(start, t1, leakRate) + 1), t1), t2, leakRate);
+        Float direct = levelAt(
+            levelAt(float(capacity - 1), float(t0), float(t1), float(leakRate), probeCapacity()).add(float(1)),
+            float(t1),
+            float(t2),
+            float(leakRate),
+            probeCapacity()
+        );
 
         // The same through a fill of one unit at t1.
-        uint256 viaFill = levelAt(fill(start, t1, capacity, leakRate, 1), t2, leakRate);
+        (Float filled, Float filledAt) =
+            fill(float(capacity - 1), float(t0), float(t1), float(capacity), float(leakRate), float(1));
 
-        assertEq(direct, viaFill);
+        assertFloatEq(direct, levelAt(filled, filledAt, float(t2), float(leakRate), probeCapacity()));
     }
 
-    /// The other half of "a zero word is a valid initial state", asserted
+    /// The other half of "a zeroed bucket is a valid initial state", asserted
     /// rather than described because the library warns about it: it cannot tell
-    /// a *cleared* slot from an untouched one, so `delete` on a bucket is a
-    /// full refund of whatever was outstanding rather than cleanup.
-    function testAClearedSlotIsAFullRefundAtTheSameSecond() external pure {
-        uint256 capacity = 3600e18;
-        uint256 leakRate = 1e18;
+    /// a *cleared* level from one that was never written, so clearing a bucket
+    /// is a full refund of whatever was outstanding rather than cleanup.
+    function testAClearedBucketIsAFullRefundAtTheSameSecond() external pure {
+        (Float full, Float fullAt) =
+            fill(float(0), float(0), float(1000), workedCapacity(), workedLeakRate(), workedCapacity());
+        assertFloatEq(headroomAt(full, fullAt, float(1000), workedCapacity(), workedLeakRate()), float(0));
 
-        uint256 full = fill(0, 1000, capacity, leakRate, capacity);
-        assertEq(headroomAt(full, 1000, capacity, leakRate), 0);
+        // `delete sBuckets[minter]`, or writing a zero level back, is exactly
+        // this.
+        assertFloatEq(headroomAt(float(0), float(0), float(1000), workedCapacity(), workedLeakRate()), workedCapacity());
 
-        // `delete sBuckets[minter]` is exactly this: the word becomes zero.
-        uint256 cleared = 0;
-        assertEq(headroomAt(cleared, 1000, capacity, leakRate), capacity);
-
-        // And it is the same word an untouched slot holds, so no read here can
+        // And it is what an untouched bucket holds, so no read here can
         // distinguish the two. The warning is a warning because the library
         // cannot enforce it.
-        assertEq(cleared, LibCheckpointWord.packed(0, 0));
+        LeakyBucket memory untouched;
+        assertEq(Float.unwrap(untouched.level), Float.unwrap(float(0)));
+        assertEq(Float.unwrap(untouched.timestamp), Float.unwrap(float(0)));
     }
 
     // ---------------------------------------------------------------- //
     //                          The fillable domain                      //
     // ---------------------------------------------------------------- //
 
-    /// The rule both entry points obey, stated once and fuzzed over the
-    /// UNBOUNDED input space rather than over `uint64`/`uint192` parameters
-    /// that assume the bounds instead of checking them: **a read answers
-    /// exactly where `fill` acts**, and refuses exactly what `fill` refuses,
-    /// with the same error carrying the same argument.
+    /// The rule both entry points obey, stated once: **a read answers exactly
+    /// where `fill` acts**, and refuses exactly what `fill` refuses, with the
+    /// same error carrying the same argument.
+    ///
+    /// The old domain was everything the packing could hold, and this was
+    /// fuzzed over unbounded `uint256` parameters so that the bounds were
+    /// checked rather than assumed. Nothing is packed now, so the domain is not
+    /// a width at all: it is the SIGN of the capacity and of the leak rate, and
+    /// the fuzz runs over both signs of each.
     function testEntryPointsAnswerOnExactlyTheFillableDomain(
+        uint256 level,
         uint256 checkpoint,
         uint256 timestamp,
-        uint256 capacity,
-        uint256 leakRate
+        int256 capacity,
+        int256 leakRate
     ) external {
-        if (capacity > LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX) {
-            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
-            this.externalHeadroomAt(checkpoint, timestamp, capacity, leakRate);
-            vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
-            this.externalFill(checkpoint, timestamp, capacity, leakRate, 0);
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        Float capacityFloat = signedFloat(bound(capacity, -MAX_SIGNED, MAX_SIGNED));
+        Float leakRateFloat = signedFloat(bound(leakRate, -MAX_SIGNED, MAX_SIGNED));
+
+        if (capacityFloat.lt(float(0))) {
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+            this.externalHeadroomAt(float(level), float(checkpoint), float(timestamp), capacityFloat, leakRateFloat);
+            // The domain is checked before the amount, so a zero amount still
+            // reports the capacity.
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+            this.externalFill(float(level), float(checkpoint), float(timestamp), capacityFloat, leakRateFloat, float(0));
             return;
         }
 
-        if (timestamp > type(uint64).max) {
-            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
-            this.externalHeadroomAt(checkpoint, timestamp, capacity, leakRate);
-            // The domain is checked before the amount, so a zero amount still
-            // reports the second.
-            vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
-            this.externalFill(checkpoint, timestamp, capacity, leakRate, 0);
+        if (leakRateFloat.lt(float(0))) {
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+            this.externalHeadroomAt(float(level), float(checkpoint), float(timestamp), capacityFloat, leakRateFloat);
+            vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+            this.externalFill(float(level), float(checkpoint), float(timestamp), capacityFloat, leakRateFloat, float(0));
             return;
         }
 
         // Inside the domain both of them answer, and what `headroomAt` names is
         // what `fill` takes.
-        uint256 headroom = headroomAt(checkpoint, timestamp, capacity, leakRate);
-        if (headroom == 0) {
+        Float headroom = headroomAt(float(level), float(checkpoint), float(timestamp), capacityFloat, leakRateFloat);
+        if (headroom.isZero()) {
             vm.expectRevert(abi.encodeWithSelector(LeakyBucketZeroAmount.selector));
-            this.externalFill(checkpoint, timestamp, capacity, leakRate, 0);
+            this.externalFill(float(level), float(checkpoint), float(timestamp), capacityFloat, leakRateFloat, float(0));
         } else {
-            fill(checkpoint, timestamp, capacity, leakRate, headroom);
+            fill(float(level), float(checkpoint), float(timestamp), capacityFloat, leakRateFloat, headroom);
         }
     }
 
-    /// The library cannot enforce a capacity it cannot store, so it refuses one
+    /// No fill could ever fit a negative capacity, so the library refuses one
     /// rather than answering questions about it.
-    function testEntryPointsRejectAnUnenforceableCapacity(
-        uint192 level,
-        uint64 checkpoint,
-        uint64 timestamp,
-        uint256 capacity,
+    ///
+    /// This is where the old `LEAKY_BUCKET_LEVEL_MAX` guard went. The old
+    /// refusal was of a capacity too WIDE to store; a `Float` capacity has no
+    /// width to exceed, and what is left to refuse is the one that is
+    /// meaningless.
+    function testEntryPointsRejectANegativeCapacity(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        int256 capacity,
         uint256 leakRate,
         uint256 amount
     ) external {
-        capacity = bound(capacity, LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX + 1, type(uint256).max);
-        uint256 checkpointWord = LibCheckpointWord.packed(level, checkpoint);
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        amount = bound(amount, 0, MAX_LEVEL);
+        Float capacityFloat = signedFloat(bound(capacity, -MAX_SIGNED, -1));
 
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
-        this.externalHeadroomAt(checkpointWord, timestamp, capacity, leakRate);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        this.externalHeadroomAt(float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate));
 
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityOverflow.selector, capacity));
-        this.externalFill(checkpointWord, timestamp, capacity, leakRate, amount);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        this.externalLevelAt(float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        this.externalFill(
+            float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate), float(amount)
+        );
     }
 
-    /// The other side of that guard, and the bound `LEAKY_BUCKET_LEVEL_MAX` is
-    /// exported for: everything up to and including the level width is
-    /// accepted, so the check is a bound on what can be stored and not a
-    /// narrowing of the policy space.
-    function testEveryStorableCapacityIsAccepted(uint256 checkpoint, uint64 timestamp, uint256 capacity) external pure {
-        capacity = bound(capacity, 0, LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX);
-        headroomAt(checkpoint, timestamp, capacity, 0);
+    /// A negative leak rate fills the bucket as time passes, which is the
+    /// opposite of a leak, so both entry points refuse it BY NAME and nothing
+    /// is stored.
+    ///
+    /// The old suite refused a `timestamp` the packed field could not hold. The
+    /// field is gone and a `Float` holds any clock, so this is the guard that
+    /// took its place: the one input that would turn the cap into a faucet.
+    function testEntryPointsRejectANegativeLeakRate(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
+        int256 leakRate,
+        uint256 amount
+    ) external {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        amount = bound(amount, 0, MAX_LEVEL);
+        Float leakRateFloat = signedFloat(bound(leakRate, -MAX_SIGNED, -1));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+        this.externalHeadroomAt(float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat);
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+        this.externalLevelAt(float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat);
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+        this.externalFill(
+            float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat, float(amount)
+        );
     }
 
-    /// At the widest capacity the library can store, the documented agreement
-    /// holds exactly: `headroomAt` names the largest amount `fill` accepts,
-    /// `fill` accepts it and stores it without truncating, and one unit more is
-    /// rejected with the capacity error rather than with an arithmetic failure.
-    function testTheWidestStorableCapacityIsExactlyFillableAndNotTruncated() external {
-        uint256 capacity = LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX;
+    /// The other side of that guard: every non-negative capacity is accepted,
+    /// at any magnitude and any scale, so the check is a check on the sign and
+    /// not a narrowing of the policy space.
+    ///
+    /// The old form of this bounded the capacity by `LEAKY_BUCKET_LEVEL_MAX`,
+    /// which was exported for exactly that purpose. There is no such bound to
+    /// assert against, so the fuzz walks the coefficient and the exponent
+    /// instead — the two halves a `Float` actually has.
+    function testEveryNonNegativeCapacityIsAccepted(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 coefficient,
+        int256 exponent
+    ) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        //forge-lint: disable-next-line(unsafe-typecast)
+        int256 signedCoefficient = int256(bound(coefficient, 0, uint256(int256(type(int224).max))));
 
-        uint256 headroom = headroomAt(0, 0, capacity, 0);
-        assertEq(headroom, LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX);
+        headroomAt(
+            float(level),
+            float(checkpoint),
+            float(timestamp),
+            LibDecimalFloat.packLossless(signedCoefficient, bound(exponent, -1000, 1000)),
+            float(0)
+        );
+    }
 
-        uint256 result = fill(0, 0, capacity, 0, headroom);
-        assertEq(LibCheckpointWord.storedLevel(result), LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX);
-        assertEq(LibCheckpointWord.storedTimestamp(result), 0);
+    /// At a capacity far wider than any packed field could have held, the
+    /// documented agreement still holds exactly: `headroomAt` names the largest
+    /// amount `fill` accepts, `fill` accepts it and stores it without
+    /// truncating, and one unit more is rejected with the capacity error rather
+    /// than with an arithmetic failure.
+    ///
+    /// `1e60` is the point: it is about `2**199`, so the old library could not
+    /// have stored it as a level at all, and one unit on top of it is still an
+    /// exact `Float` rather than a rounding of it.
+    function testAVeryWideCapacityIsExactlyFillableAndNotTruncated() external view {
+        Float capacity = LibDecimalFloat.packLossless(1e60, 0);
+
+        Float headroom = headroomAt(float(0), float(0), float(0), capacity, float(0));
+        assertFloatEq(headroom, capacity);
+
+        (Float level, Float checkpoint) = fill(float(0), float(0), float(0), capacity, float(0), headroom);
+        assertFloatEq(level, capacity);
+        assertFloatEq(checkpoint, float(0));
         // Not truncated: the level that went in is the level that reads back,
         // and it offers nothing further at that same second.
-        assertEq(headroomAt(result, 0, capacity, 0), 0);
+        assertFloatEq(headroomAt(level, checkpoint, float(0), capacity, float(0)), float(0));
 
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketCapacityExceeded.selector, capacity, 0, headroom + 1));
-        this.externalFill(0, 0, capacity, 0, headroom + 1);
-    }
-
-    /// A `timestamp` the packed field cannot hold is refused BY NAME, and
-    /// nothing is stored.
-    function testFillRevertsOnATimestampItCannotStore(
-        uint192 level,
-        uint64 checkpoint,
-        uint256 timestamp,
-        uint192 capacity,
-        uint256 leakRate
-    ) external {
-        timestamp = bound(timestamp, uint256(type(uint64).max) + 1, type(uint256).max);
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
-        this.externalFill(LibCheckpointWord.packed(level, checkpoint), timestamp, capacity, leakRate, 0);
+        Float overshoot = headroom.add(float(1));
+        assertTrue(overshoot.gt(headroom), "one unit was lost");
+        assertCapacityExceeded(
+            fillRefused(float(0), float(0), float(0), capacity, float(0), overshoot), capacity, float(0), overshoot
+        );
     }
 
     /// The error identities are a published surface: a consumer that catches a
     /// rejection, an indexer, or a frontend decoding a failed simulation all
     /// match on the four byte selector, which is the hash of the signature.
+    ///
+    /// A `Float` is a user defined value type over `bytes32`, and the ABI names
+    /// the underlying type, so that is what the signatures below say.
     function testErrorSelectorsArePinnedToTheirSignatures() external pure {
         assertEq(
             bytes32(LeakyBucketCapacityExceeded.selector),
-            bytes32(bytes4(keccak256("LeakyBucketCapacityExceeded(uint256,uint256,uint256)")))
+            bytes32(bytes4(keccak256("LeakyBucketCapacityExceeded(bytes32,bytes32,bytes32)")))
+        );
+        assertEq(bytes32(LeakyBucketZeroAmount.selector), bytes32(bytes4(keccak256("LeakyBucketZeroAmount()"))));
+        assertEq(
+            bytes32(LeakyBucketNegativeAmount.selector),
+            bytes32(bytes4(keccak256("LeakyBucketNegativeAmount(bytes32)")))
         );
         assertEq(
-            bytes32(LeakyBucketCapacityOverflow.selector),
-            bytes32(bytes4(keccak256("LeakyBucketCapacityOverflow(uint256)")))
+            bytes32(LeakyBucketNegativeCapacity.selector),
+            bytes32(bytes4(keccak256("LeakyBucketNegativeCapacity(bytes32)")))
         );
         assertEq(
-            bytes32(LeakyBucketTimestampOverflow.selector),
-            bytes32(bytes4(keccak256("LeakyBucketTimestampOverflow(uint256)")))
+            bytes32(LeakyBucketNegativeLeakRate.selector),
+            bytes32(bytes4(keccak256("LeakyBucketNegativeLeakRate(bytes32)")))
         );
-    }
-
-    /// `pack` and `unpack` are inverses over every storable pair, and agree
-    /// with the layout restated in `LibCheckpointWord`.
-    function testPackUnpackRoundTrip(uint192 level, uint64 timestamp) external pure {
-        uint256 word = LibLeakyBucket.pack(level, timestamp);
-        assertEq(word, LibCheckpointWord.packed(level, timestamp));
-        (uint256 unpackedLevel, uint256 unpackedTimestamp) = LibLeakyBucket.unpack(word);
-        assertEq(unpackedLevel, level);
-        assertEq(unpackedTimestamp, timestamp);
-    }
-
-    /// A level wider than its field is refused by name, not truncated.
-    function testPackRevertsOnAWideLevel(uint256 level, uint64 timestamp) external {
-        level = bound(level, uint256(type(uint192).max) + 1, type(uint256).max);
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketLevelOverflow.selector, level));
-        this.externalPack(level, timestamp);
-    }
-
-    /// A timestamp wider than its field is refused by name, not truncated.
-    function testPackRevertsOnAWideTimestamp(uint192 level, uint256 timestamp) external {
-        timestamp = bound(timestamp, uint256(type(uint64).max) + 1, type(uint256).max);
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketTimestampOverflow.selector, timestamp));
-        this.externalPack(level, timestamp);
     }
 }

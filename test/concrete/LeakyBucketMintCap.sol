@@ -2,43 +2,59 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {LibLeakyBucket, LeakyBucket, LeakyBucketCapacityOverflow} from "../../src/lib/LibLeakyBucket.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
+import {LibLeakyBucket, LeakyBucket} from "../../src/lib/LibLeakyBucket.sol";
 
 /// @title LeakyBucketMintCap
 /// @notice Test harness: one bucket per minter, a mint, and a governance setter.
 contract LeakyBucketMintCap {
+    using LibDecimalFloat for Float;
+
     /// One bucket per minter.
     mapping(address minter => LeakyBucket bucket) internal sBuckets;
 
     /// Total minted, standing in for an ERC20 balance.
-    uint256 public totalMinted;
+    Float public totalMinted;
 
     /// Where governance goes.
-    function setPolicy(address minter, uint256 capacity, uint256 leakRate) external {
-        if (capacity > LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX) {
-            revert LeakyBucketCapacityOverflow(capacity);
-        }
+    ///
+    /// No capacity bound to check. The old harness refused a capacity over
+    /// `LEAKY_BUCKET_LEVEL_MAX` because a larger one could not be packed; a
+    /// `Float` capacity has no such ceiling, and `fill` rejects the capacities
+    /// that are actually meaningless (the negative ones) itself.
+    function setPolicy(address minter, Float capacity, Float leakRate) external {
         LeakyBucket storage bucket = sBuckets[minter];
         bucket.capacity = capacity;
         bucket.leakRate = leakRate;
     }
 
     /// The whole enforcement path: load the minter's bucket, hand it to `fill`,
-    /// store the checkpoint it returns.
-    function mint(uint256 amount) external {
-        sBuckets[msg.sender].checkpoint = LibLeakyBucket.fill(sBuckets[msg.sender], block.timestamp, amount);
-        totalMinted += amount;
+    /// store the level and checkpoint it returns.
+    function mint(Float amount) external {
+        (Float level_, Float checkpoint) = LibLeakyBucket.fill(sBuckets[msg.sender], now_(), amount);
+        sBuckets[msg.sender].level = level_;
+        sBuckets[msg.sender].timestamp = checkpoint;
+        totalMinted = totalMinted.add(amount);
     }
 
     /// What a minter could mint right now.
-    function headroom(address minter) external view returns (uint256) {
-        return LibLeakyBucket.headroomAt(sBuckets[minter], block.timestamp);
+    function headroom(address minter) external view returns (Float) {
+        return LibLeakyBucket.headroomAt(sBuckets[minter], now_());
     }
 
     /// The outstanding level against a minter's cap right now.
-    function level(address minter) external view returns (uint256) {
-        LeakyBucket memory bucket = sBuckets[minter];
-        bucket.capacity = LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX;
-        return LibLeakyBucket.LEAKY_BUCKET_LEVEL_MAX - LibLeakyBucket.headroomAt(bucket, block.timestamp);
+    ///
+    /// `levelAt`, not `capacity - headroomAt`. The headroom saturates at zero, so
+    /// after governance lowers a capacity under an outstanding level that
+    /// subtraction returns the new capacity and under-reports what is owed —
+    /// which is exactly the state a capacity cut leaves behind.
+    function level(address minter) external view returns (Float) {
+        return LibLeakyBucket.levelAt(sBuckets[minter], now_());
+    }
+
+    /// `block.timestamp` as a `Float`.
+    function now_() internal view returns (Float) {
+        //forge-lint: disable-next-line(unsafe-typecast)
+        return LibDecimalFloat.packLossless(int256(block.timestamp), 0);
     }
 }
