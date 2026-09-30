@@ -3,15 +3,15 @@
 One `internal pure` library over Rain Floats. `capacity` is the security number:
 the most a compromised minter can take in one go.
 
-## Clamp direction is a security argument, not a style choice
+## Saturation direction is a security argument, not a style choice
 
 The clamps in `src/` are load-bearing, and the safe direction differs per
-expression — a bigger leak is a lower level is more headroom, so clamping up is
-conservative in one place and permissive in another. Derive the direction for
+expression — a bigger leak is a lower level is more headroom, so "saturate up"
+is conservative in one place and permissive in another. Derive the direction for
 the expression in front of you rather than applying a rule of thumb. Reordering
-operands, or dropping the clamp at zero because a `Float` has no boundary to
-overflow, can leave every test's shape intact and still hand out headroom nobody
-earned.
+operands, or swapping a `saturatingSub` call for a plain `sub` because a `Float`
+has no boundary to overflow, can leave every test's shape intact and still hand
+out headroom nobody earned.
 
 ## `.soldeerignore` is an allowlist and nothing checks it
 

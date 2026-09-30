@@ -40,7 +40,7 @@ abstract contract LeakyBucketScratch {
     /// headroom, so a test that asserts on it is asserting that the two reads
     /// agree.
     ///
-    /// `capacity` must be at or above the level, or the headroom clamps at zero
+    /// `capacity` must be at or above the level, or the headroom saturates at zero
     /// and this returns the capacity rather than the level — which is why
     /// `LibLeakyBucket.levelAt` exists and callers wanting the level use that.
     /// The old version used `LEAKY_BUCKET_LEVEL_MAX` for the same purpose; there

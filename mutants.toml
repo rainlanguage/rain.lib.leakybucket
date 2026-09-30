@@ -13,64 +13,71 @@ proof = '(\d+) tests passed, (\d+) failed'
 fail-pattern = '\[FAIL[^\]]*\] (\S+)'
 timeout-secs = 1800
 
-# --- the clamp at zero, which is what replaced saturation ---
+# --- the saturating sub itself, which is what the old `LibSaturatingMath` call
+# became. Both mutants here are behaviours of the helper, so they reach all
+# three of its call sites at once. ---
 
 [[mutants]]
-name = "M01 the clamp takes the smaller, so a negative level is kept"
+name = "M01 the saturation takes the smaller, so a negative result is kept"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return LibDecimalFloat.max(a, LibDecimalFloat.FLOAT_ZERO);"
-replacement = "return LibDecimalFloat.min(a, LibDecimalFloat.FLOAT_ZERO);"
+target = "return LibDecimalFloat.max(a.sub(b), LibDecimalFloat.FLOAT_ZERO);"
+replacement = "return LibDecimalFloat.min(a.sub(b), LibDecimalFloat.FLOAT_ZERO);"
+
+[[mutants]]
+name = "M02 the saturating sub adds instead of subtracting"
+file = "src/lib/LibLeakyBucket.sol"
+target = "return LibDecimalFloat.max(a.sub(b), LibDecimalFloat.FLOAT_ZERO);"
+replacement = "return LibDecimalFloat.max(a.add(b), LibDecimalFloat.FLOAT_ZERO);"
 
 # --- the leak ---
 
 [[mutants]]
-name = "M02 the leak adds instead of subtracting"
+name = "M03 the leak is measured backwards, so the level is the thing leaked from"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return atLeastZero(level.sub(elapsed.mul(leakRate)));"
-replacement = "return atLeastZero(level.add(elapsed.mul(leakRate)));"
+target = "return saturatingSub(level, elapsed.mul(leakRate));"
+replacement = "return saturatingSub(elapsed.mul(leakRate), level);"
 
 [[mutants]]
-name = "M03 the leak ignores the rate, leaking one unit per unit of time"
+name = "M04 the leak ignores the rate, leaking one unit per unit of time"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return atLeastZero(level.sub(elapsed.mul(leakRate)));"
-replacement = "return atLeastZero(level.sub(elapsed));"
+target = "return saturatingSub(level, elapsed.mul(leakRate));"
+replacement = "return saturatingSub(level, elapsed);"
 
 [[mutants]]
-name = "M04 elapsed is not clamped, so a backwards clock credits negative leak"
+name = "M05 elapsed does not saturate, so a backwards clock credits negative leak"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return leak(level, atLeastZero(timestamp.sub(checkpoint)), leakRate);"
+target = "return leak(level, saturatingSub(timestamp, checkpoint), leakRate);"
 replacement = "return leak(level, timestamp.sub(checkpoint), leakRate);"
 
 [[mutants]]
-name = "M05 elapsed is measured backwards"
+name = "M06 elapsed is measured backwards"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return leak(level, atLeastZero(timestamp.sub(checkpoint)), leakRate);"
-replacement = "return leak(level, atLeastZero(checkpoint.sub(timestamp)), leakRate);"
+target = "return leak(level, saturatingSub(timestamp, checkpoint), leakRate);"
+replacement = "return leak(level, saturatingSub(checkpoint, timestamp), leakRate);"
 
 # --- the headroom ---
 
 [[mutants]]
-name = "M06 headroom is measured from the level instead of the capacity"
+name = "M07 headroom is measured from the level instead of the capacity"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return atLeastZero(capacity.sub(levelNow));"
-replacement = "return atLeastZero(levelNow.sub(capacity));"
+target = "return saturatingSub(capacity, levelNow);"
+replacement = "return saturatingSub(levelNow, capacity);"
 
 [[mutants]]
-name = "M07 headroom is not clamped, so an over-capacity bucket offers negative"
+name = "M08 headroom does not saturate, so an over-capacity bucket offers negative"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return atLeastZero(capacity.sub(levelNow));"
+target = "return saturatingSub(capacity, levelNow);"
 replacement = "return capacity.sub(levelNow);"
-
 # --- the fillable domain ---
 
 [[mutants]]
-name = "M08 a negative capacity is accepted and a positive one refused"
+name = "M09 a negative capacity is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {"
 replacement = "if (capacity.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 [[mutants]]
-name = "M09 a negative leak rate is accepted and a positive one refused"
+name = "M10 a negative leak rate is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {"
 replacement = "if (leakRate.gt(LibDecimalFloat.FLOAT_ZERO)) {"
@@ -78,25 +85,25 @@ replacement = "if (leakRate.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 # --- the amount guards ---
 
 [[mutants]]
-name = "M10 a zero amount is accepted"
+name = "M11 a zero amount is accepted"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (amount.isZero()) {"
 replacement = "if (false) {"
 
 [[mutants]]
-name = "M11 a negative amount is accepted and a positive one refused"
+name = "M12 a negative amount is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {"
 replacement = "if (amount.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 [[mutants]]
-name = "M12 an amount exactly at the headroom is refused"
+name = "M13 an amount exactly at the headroom is refused"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (amount.gt(headroom)) {"
 replacement = "if (amount.gte(headroom)) {"
 
 [[mutants]]
-name = "M13 the fill does not add the amount to the level"
+name = "M14 the fill does not add the amount to the level"
 file = "src/lib/LibLeakyBucket.sol"
 target = "        return filled;"
 replacement = "        return levelNow;"
@@ -104,7 +111,7 @@ replacement = "        return levelNow;"
 # --- the checkpoint ---
 
 [[mutants]]
-name = "M14 the checkpoint takes the earlier time, re-crediting leak on the next fill"
+name = "M15 the checkpoint takes the earlier time, re-crediting leak on the next fill"
 file = "src/lib/LibLeakyBucket.sol"
 target = "checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"
 replacement = "checkpoint = LibDecimalFloat.min(timestamp, bucket.timestamp);"
@@ -114,28 +121,28 @@ replacement = "checkpoint = LibDecimalFloat.min(timestamp, bucket.timestamp);"
 # call itself appears three times. ---
 
 [[mutants]]
-name = "M15 headroomAt answers on a bucket fill would refuse"
+name = "M16 headroomAt answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
 target = """        checkFillableDomain(bucket.capacity, bucket.leakRate);
         return headroomFrom("""
 replacement = """        return headroomFrom("""
 
 [[mutants]]
-name = "M16 levelAt answers on a bucket fill would refuse"
+name = "M17 levelAt answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
 target = """        checkFillableDomain(bucket.capacity, bucket.leakRate);
         return levelAt(bucket.level"""
 replacement = """        return levelAt(bucket.level"""
 
 [[mutants]]
-name = "M17 fill does not check the domain before filling"
+name = "M18 fill does not check the domain before filling"
 file = "src/lib/LibLeakyBucket.sol"
 target = """        checkFillableDomain(bucket.capacity, bucket.leakRate);
         level = fillAt("""
 replacement = """        level = fillAt("""
 
 [[mutants]]
-name = "M18 an amount too small to be recorded is accepted and charges nothing"
+name = "M19 an amount too small to be recorded is accepted and charges nothing"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (!filled.gt(levelNow)) {"
 replacement = "if (false) {"

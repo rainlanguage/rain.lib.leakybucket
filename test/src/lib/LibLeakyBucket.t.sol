@@ -67,7 +67,7 @@ contract LibLeakyBucketTest is Test, LeakyBucketScratch {
     /// that want a level rather than a headroom.
     ///
     /// `LeakyBucketScratch.levelAt` derives the level from the headroom, and
-    /// the headroom clamps at zero, so it needs a capacity it cannot clamp
+    /// the headroom saturates at zero, so it needs a capacity it cannot saturate
     /// against. The old suite had `LEAKY_BUCKET_LEVEL_MAX` to hand for this; a
     /// `Float` has no such ceiling to borrow, so the bound is named here.
     function probeCapacity() internal pure returns (Float) {
@@ -201,7 +201,7 @@ contract LibLeakyBucketTest is Test, LeakyBucketScratch {
     ///
     /// The old bucket reached this case by overflowing the product, which was a
     /// leak wider than any representable level and so saturated. There is no
-    /// width to overflow now; what is left is the clamp at zero, which is the
+    /// width to overflow now; what is left is `saturatingSub` at zero, which is the
     /// property the bucket actually has.
     function testLeakLargerThanTheLevelEmptiesBucket(uint256 level, uint256 extra, uint256 leakRate) external pure {
         level = bound(level, 0, MAX_LEVEL);
@@ -309,7 +309,7 @@ contract LibLeakyBucketTest is Test, LeakyBucketScratch {
         (Float newLevel,) =
             fill(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), headroom);
 
-        // The fill was taken in full, not silently dropped or clamped.
+        // The fill was taken in full, not silently dropped or saturated.
         assertFloatEq(newLevel, levelNow.add(headroom));
         // And it lands exactly at the capacity, unless the bucket was already
         // above it, in which case the only headroom on offer was zero.

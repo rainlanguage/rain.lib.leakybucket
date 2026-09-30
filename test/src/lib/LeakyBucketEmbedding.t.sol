@@ -225,7 +225,7 @@ contract LeakyBucketEmbeddingTest is Test {
         //
         // Read from `sCap.level` AND off the refusal, because they came apart
         // once: a harness deriving the level as `capacity - headroom` reported
-        // the new capacity here, since the headroom clamps at zero whenever the
+        // the new capacity here, since the headroom saturates at zero whenever the
         // level is above the capacity. A cut is the only state that distinguishes
         // the two, so it is the only place a test can hold `level` to reporting
         // what is owed rather than what fits.
@@ -292,7 +292,7 @@ contract LeakyBucketEmbeddingTest is Test {
             Float headroomBefore = sCap.headroom(ALICE);
             Float levelBefore = sCap.level(ALICE);
             assertTrue(headroomBefore.lte(workedCapacity()));
-            // Two independent reads of the same bucket: `headroomAt` clamps a
+            // Two independent reads of the same bucket: `headroomAt` saturates a
             // subtraction from the capacity, `levelAt` leaks the stored level
             // forward. They agree on every bucket at or under capacity, and
             // this pins that they do.

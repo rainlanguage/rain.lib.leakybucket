@@ -45,34 +45,34 @@ struct LeakyBucket {
 /// Nothing saturates at a type boundary any more, because a `Float` has no
 /// boundary a bucket reaches: the level, the capacity and the timestamp were
 /// each bounded by the field they were packed into, and none of them is packed
-/// now. What remains of the old saturation is the clamp at ZERO — a leak never
-/// takes the level below it and a backwards clock credits no leak — which is a
-/// property of the bucket rather than of the arithmetic.
+/// now. What remains of the old saturation is `saturatingSub` at zero — a leak
+/// never takes the level below it and a backwards clock credits no leak — which
+/// is a property of the bucket rather than of the arithmetic.
 library LibLeakyBucket {
     using LibDecimalFloat for Float;
 
-    /// `a` unless it is below zero.
-    function atLeastZero(Float a) private pure returns (Float) {
-        return LibDecimalFloat.max(a, LibDecimalFloat.FLOAT_ZERO);
+    /// `a - b`, saturating at zero.
+    function saturatingSub(Float a, Float b) private pure returns (Float) {
+        return LibDecimalFloat.max(a.sub(b), LibDecimalFloat.FLOAT_ZERO);
     }
 
-    /// `level` after `elapsed` of leak, clamped at zero.
+    /// `level` after `elapsed` of leak, saturating at zero.
     function leak(Float level, Float elapsed, Float leakRate) private pure returns (Float) {
-        return atLeastZero(level.sub(elapsed.mul(leakRate)));
+        return saturatingSub(level, elapsed.mul(leakRate));
     }
 
     /// The level recorded at `checkpoint` leaked forward to `timestamp`.
     ///
-    /// The elapsed time is clamped at zero, so a `timestamp` before the
+    /// The elapsed time saturates at zero, so a `timestamp` before the
     /// checkpoint leaks nothing rather than crediting a negative elapsed
     /// against the level.
     function levelAt(Float level, Float checkpoint, Float timestamp, Float leakRate) private pure returns (Float) {
-        return leak(level, atLeastZero(timestamp.sub(checkpoint)), leakRate);
+        return leak(level, saturatingSub(timestamp, checkpoint), leakRate);
     }
 
-    /// `capacity - levelNow`, clamped at zero.
+    /// `capacity - levelNow`, saturating at zero.
     function headroomFrom(Float capacity, Float levelNow) private pure returns (Float) {
-        return atLeastZero(capacity.sub(levelNow));
+        return saturatingSub(capacity, levelNow);
     }
 
     /// Reverts on a bucket that cannot answer, so a read refuses exactly where
@@ -127,7 +127,7 @@ library LibLeakyBucket {
     ///
     /// Exported because it cannot be derived from `headroomAt`. `capacity -
     /// headroom` agrees with the level only while the level is at or under the
-    /// capacity; the headroom clamps at zero, so once a capacity is lowered
+    /// capacity; the headroom saturates at zero, so once a capacity is lowered
     /// under an outstanding level that subtraction returns the capacity and
     /// silently under-reports what is owed. A caller that wants the level has to
     /// be given it.

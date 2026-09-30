@@ -44,7 +44,7 @@ contract LeakyBucketMintCap {
 
     /// The outstanding level against a minter's cap right now.
     ///
-    /// `levelAt`, not `capacity - headroomAt`. The headroom clamps at zero, so
+    /// `levelAt`, not `capacity - headroomAt`. The headroom saturates at zero, so
     /// after governance lowers a capacity under an outstanding level that
     /// subtraction returns the new capacity and under-reports what is owed —
     /// which is exactly the state a capacity cut leaves behind.

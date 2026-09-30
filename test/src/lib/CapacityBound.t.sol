@@ -47,7 +47,7 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
     /// that want a level rather than a headroom.
     ///
     /// `LeakyBucketScratch.levelAt` derives the level from the headroom, and
-    /// the headroom clamps at zero, so it needs a capacity it cannot clamp
+    /// the headroom saturates at zero, so it needs a capacity it cannot saturate
     /// against. The old suite had `LEAKY_BUCKET_LEVEL_MAX` to hand for this; a
     /// `Float` has no such ceiling to borrow, so the bound is named here.
     function probeCapacity() internal pure returns (Float) {
@@ -270,12 +270,12 @@ contract CapacityBoundTest is Test, LeakyBucketScratch {
         // converges to the rate the policy names or to something slacker.
         //
         // Credited leak is exactly `min(level, elapsed * leakRate)`, with
-        // `elapsed` taken from the checkpoint and clamped at zero behind it.
+        // `elapsed` taken from the checkpoint and saturated at zero behind it.
         // The leak rate is fuzzed up to `2**128` against a level of at most the
         // same, so the product is free to run many bucket-fulls past the level
         // and the `min` is what holds it. There is no word for it to overflow
-        // any more; the clamp at zero is the whole of what the old saturation
-        // left behind, and it is this identity that says where it binds.
+        // any more; `saturatingSub` at zero is the whole of what the old
+        // saturating arithmetic left behind, and it is this identity that says where it binds.
         Float elapsed = LibDecimalFloat.max(float(later).sub(float(checkpoint)), float(0));
         Float product = elapsed.mul(float(leakRate));
         assertFloatEq(float(level).sub(levelLater), LibDecimalFloat.min(product, float(level)));
