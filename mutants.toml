@@ -98,8 +98,8 @@ replacement = "if (amount.gte(headroom)) {"
 [[mutants]]
 name = "M13 the fill does not add the amount to the level"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return levelNow.add(amount);"
-replacement = "return levelNow;"
+target = "        return filled;"
+replacement = "        return levelNow;"
 
 # --- the checkpoint ---
 
