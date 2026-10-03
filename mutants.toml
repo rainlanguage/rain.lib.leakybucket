@@ -172,3 +172,11 @@ name = "M23 settle at a backwards clock moves the checkpoint back"
 file = "src/lib/LibLeakyBucket.sol"
 target = "checkpoint = LibDecimalFloat.max(bucket.timestamp, timestamp);"
 replacement = "checkpoint = timestamp;"
+
+[[mutants]]
+name = "M24 settle settles nothing, so a rate change re-rates the whole interval"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        level = levelAt(bucket.level, bucket.timestamp, timestamp, bucket.leakRate);
+        checkpoint = LibDecimalFloat.max(bucket.timestamp, timestamp);"""
+replacement = """        level = bucket.level;
+        checkpoint = bucket.timestamp;"""

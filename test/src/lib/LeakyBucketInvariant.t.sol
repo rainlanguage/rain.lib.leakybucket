@@ -33,16 +33,17 @@ contract LeakyBucketInvariantTest is Test {
         cap.setPolicy(ALICE, asFloat(CAPACITY), asFloat(LEAK_RATE));
         handler = new LeakyBucketHandler(cap, ALICE, CAPACITY, LEAK_RATE);
 
-        // The four selectors are named rather than left to the default, which
+        // The five selectors are named rather than left to the default, which
         // would be every external function on the target INCLUDING the ones
         // `Test` brings in by inheritance. Under `fail-on-revert = true` a
         // fuzzer call into one of those that reverted would fail the run for a
         // reason that has nothing to do with the bucket.
-        bytes4[] memory selectors = new bytes4[](4);
+        bytes4[] memory selectors = new bytes4[](5);
         selectors[0] = LeakyBucketHandler.mint.selector;
         selectors[1] = LeakyBucketHandler.wait.selector;
         selectors[2] = LeakyBucketHandler.setCapacity.selector;
         selectors[3] = LeakyBucketHandler.setLeakRate.selector;
+        selectors[4] = LeakyBucketHandler.tick.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }

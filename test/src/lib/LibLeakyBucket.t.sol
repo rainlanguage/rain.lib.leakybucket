@@ -684,6 +684,9 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         this.externalFill(
             float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate), float(amount)
         );
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        this.externalSettle(float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate));
     }
 
     /// A negative leak rate fills the bucket as time passes, which is the
@@ -718,6 +721,99 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         this.externalFill(
             float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat, float(amount)
         );
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+        this.externalSettle(float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat);
+    }
+
+    // ---------------------------------------------------------------- //
+    //                               Settle                              //
+    // ---------------------------------------------------------------- //
+
+    /// What `settle` returns, against arithmetic done in words rather than
+    /// through the library: the level less the leak, floored at zero, and the
+    /// later of the two times.
+    function testSettleReturnsTheLeakedLevelAndTheLaterTime(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 leakRate
+    ) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+
+        uint256 elapsed = timestamp > checkpoint ? timestamp - checkpoint : 0;
+        uint256 leaked = elapsed * leakRate;
+        uint256 expectedLevel = leaked >= level ? 0 : level - leaked;
+        uint256 expectedCheckpoint = timestamp > checkpoint ? timestamp : checkpoint;
+
+        (Float settled, Float settledAt) =
+            settle(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(leakRate));
+        assertFloatEq(settled, float(expectedLevel));
+        assertFloatEq(settledAt, float(expectedCheckpoint));
+    }
+
+    /// Under an unchanged rate a settle is invisible: every later read of the
+    /// settled bucket is the read of the bucket it was settled from.
+    function testSettleUnderAnUnchangedRateChangesNoLaterRead(
+        uint256 level,
+        uint256 leakRate,
+        uint256 t0,
+        uint256 gapA,
+        uint256 gapB
+    ) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        t0 = bound(t0, 0, MAX_TIME);
+        uint256 t1 = bound(gapA, 0, MAX_TIME - t0) + t0;
+        uint256 t2 = bound(gapB, 0, MAX_TIME - t1) + t1;
+
+        (Float settled, Float settledAt) = settle(float(level), float(t0), float(t1), probeCapacity(), float(leakRate));
+        assertFloatEq(
+            levelAt(settled, settledAt, float(t2), float(leakRate), probeCapacity()),
+            levelAt(float(level), float(t0), float(t2), float(leakRate), probeCapacity())
+        );
+    }
+
+    /// The worked example of a rate rise. A bucket of 100 filled at second 0
+    /// and leaking 1 a second has earned 10 of headroom by second 10. Raising
+    /// the rate to 100 without settling re-rates those ten seconds and offers
+    /// the whole capacity at once; settled first, the ten seconds stay priced
+    /// at 1 and the new rate starts from second 10.
+    function testARateRiseIsRetroactiveUnlessSettled() external pure {
+        Float capacity = float(100);
+
+        assertFloatEq(headroomAt(float(100), float(0), float(10), capacity, float(1)), float(10));
+
+        // The rate written alone.
+        assertFloatEq(headroomAt(float(100), float(0), float(10), capacity, float(100)), float(100));
+
+        // Settled at the old rate, then the new rate.
+        (Float settled, Float settledAt) = settle(float(100), float(0), float(10), capacity, float(1));
+        assertFloatEq(settled, float(90));
+        assertFloatEq(settledAt, float(10));
+        assertFloatEq(headroomAt(settled, settledAt, float(10), capacity, float(2)), float(10));
+        assertFloatEq(headroomAt(settled, settledAt, float(15), capacity, float(2)), float(20));
+    }
+
+    /// A zero rate pauses the leak only between two settles. Without them the
+    /// paused time is leaked at the restored rate.
+    function testAZeroRateIsAPauseOnlyWhenSettled() external pure {
+        Float capacity = float(100);
+
+        // Never settled: a full bucket at second 0, read at second 1000 at the
+        // restored rate, has drained whatever the rate was in between.
+        assertFloatEq(headroomAt(float(100), float(0), float(1000), capacity, float(1)), float(100));
+
+        // Settled into the pause at second 10 and out of it at second 1000.
+        (Float paused, Float pausedAt) = settle(float(100), float(0), float(10), capacity, float(1));
+        (Float resumed, Float resumedAt) = settle(paused, pausedAt, float(1000), capacity, float(0));
+        assertFloatEq(resumed, float(90));
+        assertFloatEq(resumedAt, float(1000));
+        assertFloatEq(headroomAt(resumed, resumedAt, float(1000), capacity, float(1)), float(10));
+        assertFloatEq(headroomAt(resumed, resumedAt, float(1005), capacity, float(1)), float(15));
     }
 
     /// The other side of that guard: every non-negative capacity is accepted,

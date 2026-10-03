@@ -32,9 +32,12 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// The one minter whose bucket this handler drives.
     address internal immutable MINTER;
 
-    /// The largest leak rate the fuzzer may set: the starting capacity per
-    /// second, so one second can refill a whole burst.
-    uint256 internal constant LEAK_RATE_CEILING = 3600;
+    /// The largest leak rate the fuzzer may set, and the longest `tick`. Both
+    /// small against the starting capacity, so a history can hold a level that
+    /// has not fully drained when the rate moves. Past a full drain a re-rated
+    /// interval and a correctly rated one read the same.
+    uint256 internal constant LEAK_RATE_CEILING = 10;
+    uint256 internal constant TICK_CEILING = 3600;
 
     /// The leak rate currently in force.
     uint256 public leakRate;
@@ -109,6 +112,13 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// bucket.
     function wait(uint32 gap) external {
         leaked += uint256(gap) * leakRate;
+        vm.warp(block.timestamp + gap);
+    }
+
+    /// A wait short enough to leave part of a level standing.
+    function tick(uint256 gap) external {
+        gap = bound(gap, 0, TICK_CEILING);
+        leaked += gap * leakRate;
         vm.warp(block.timestamp + gap);
     }
 
