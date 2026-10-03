@@ -205,11 +205,14 @@ ask before it fills, and this is the question. Computing it outside the library
 instead means re-deriving the leak and the clamp directions outside the library
 that exists to hold them.
 
-What it answers is exactly what `fill` takes: the amount it names always fits,
-one unit more is always rejected, and the two are guarded by the same domain
-check and computed through the same arithmetic, so they agree at every input by
-construction. Neither answers at all for a negative `capacity` or a negative
-`leakRate`, because any answer there would be a promise `fill` breaks.
+What it answers is the most `fill` takes: a positive answer always fits in full,
+any amount above the answer is always rejected, and the two are guarded by the
+same domain check and computed through the same arithmetic, so they agree at
+every input by construction. A zero answer means nothing fits, and it is the one
+answer that cannot be handed on: `fill` accepts only positive amounts and
+refuses zero with `LeakyBucketZeroAmount`, so a caller checks the answer for
+zero before filling. Neither answers at all for a negative `capacity` or a
+negative `leakRate`, because any answer there would be a promise `fill` breaks.
 
 `levelAt` is there because **it cannot be derived from `headroomAt`.**
 `capacity - headroom` agrees with the level only while the level is at or under
@@ -435,7 +438,8 @@ the ones fuzzed in `test/src/lib/`:
 - A fill that consumes the bucket leaves zero headroom at that same second, and
   the refill afterwards is bounded by `capacity` as well.
 - Leaking never raises the level, at any input.
-- Exactly the reported headroom fits and one unit more does not.
+- Exactly the reported headroom fits when it is positive, a zero headroom is
+  refused as a zero fill, and any amount above it is rejected.
 - Checkpointing changes nothing.
 - Every clamp at zero goes the conservative way, per the table above.
 - A stored checkpoint never moves backwards, so a fill at a stale clock is not

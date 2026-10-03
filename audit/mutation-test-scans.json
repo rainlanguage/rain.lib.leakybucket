@@ -338,6 +338,29 @@
     }
   },
   {
+    "timestamp": "2026-10-03T12:43:31Z",
+    "commit": "ef1e48f68bf7c984c9ae14651ea6f33b7239db03",
+    "testsAfterCommit": "ef1e48f68bf7c984c9ae14651ea6f33b7239db03",
+    "publishedTag": "sol-v0.4.1",
+    "commitsAheadOfTag": 4,
+    "scope": "re-probe of src/lib/LibLeakyBucket.sol after a NatSpec-only change to headroomAt for #120. No executable line in src moved and test is untouched; the pass is re-run because the record is compared against the tree, not against the bytecode.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 19,
+      "mutantsKilledByPreExistingSuite": 19,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 19,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 58,
+      "testsAfter": 58,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Clean pass: 19/19 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. The mutant set is unchanged. The suite command is not: mutants.toml named .mutation-test/suite.sh, which was never tracked, so the pass could not run from a fresh clone and aborted on a baseline with no proof of run. It points at the tracked .mutation-test/check.sh now, which gained the --force the suite comment already promised. Earlier entries were scored through the untracked wrapper and this one through the tracked one; the verdicts agree. This pass was mutation only: no adversarial enumeration was repeated, because no behaviour changed."
+    }
+  },
+  {
     "timestamp": "2026-10-03T12:50:00Z",
     "commit": "25e49b197d7b21ef4cb7e589916f21e5a1e644dd",
     "testsAfterCommit": "25e49b197d7b21ef4cb7e589916f21e5a1e644dd",
