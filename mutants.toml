@@ -73,14 +73,14 @@ replacement = "return capacity.sub(levelNow);"
 [[mutants]]
 name = "M09 a negative capacity is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {"
-replacement = "if (capacity.gt(LibDecimalFloat.FLOAT_ZERO)) {"
+target = "if (bucket.capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (bucket.capacity.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 [[mutants]]
 name = "M10 a negative leak rate is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {"
-replacement = "if (leakRate.gt(LibDecimalFloat.FLOAT_ZERO)) {"
+target = "if (bucket.leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (bucket.leakRate.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 # --- the amount guards ---
 
@@ -123,21 +123,21 @@ replacement = "checkpoint = LibDecimalFloat.min(timestamp, bucket.timestamp);"
 [[mutants]]
 name = "M16 headroomAt answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkFillableDomain(bucket.capacity, bucket.leakRate);
+target = """        checkFillableDomain(bucket, timestamp);
         return headroomFrom("""
 replacement = """        return headroomFrom("""
 
 [[mutants]]
 name = "M17 levelAt answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkFillableDomain(bucket.capacity, bucket.leakRate);
+target = """        checkFillableDomain(bucket, timestamp);
         return levelAt(bucket.level"""
 replacement = """        return levelAt(bucket.level"""
 
 [[mutants]]
 name = "M18 fill does not check the domain before filling"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkFillableDomain(bucket.capacity, bucket.leakRate);
+target = """        checkFillableDomain(bucket, timestamp);
         level = fillAt("""
 replacement = """        level = fillAt("""
 
@@ -145,4 +145,25 @@ replacement = """        level = fillAt("""
 name = "M19 an amount too small to be recorded is accepted and charges nothing"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (!filled.gt(levelNow)) {"
+replacement = "if (false) {"
+
+# --- the negative level and timestamps (#115). Each drops one check, so only a
+# test that hands over that negative kills it. ---
+
+[[mutants]]
+name = "M20 a negative stored level is accepted"
+file = "src/lib/LibLeakyBucket.sol"
+target = "if (bucket.level.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (false) {"
+
+[[mutants]]
+name = "M21 a negative stored timestamp is accepted"
+file = "src/lib/LibLeakyBucket.sol"
+target = "if (bucket.timestamp.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (false) {"
+
+[[mutants]]
+name = "M22 a negative timestamp to read or fill at is accepted"
+file = "src/lib/LibLeakyBucket.sol"
+target = "if (timestamp.lt(LibDecimalFloat.FLOAT_ZERO)) {"
 replacement = "if (false) {"

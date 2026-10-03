@@ -10,6 +10,8 @@ import {
     LeakyBucketNegativeAmount,
     LeakyBucketNegativeCapacity,
     LeakyBucketNegativeLeakRate,
+    LeakyBucketNegativeLevel,
+    LeakyBucketNegativeTimestamp,
     LeakyBucketZeroAmount,
     LibLeakyBucket
 } from "../../../src/lib/LibLeakyBucket.sol";
@@ -720,6 +722,114 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         );
     }
 
+    /// A negative stored level leaks to zero given time, but before it does it
+    /// reads as headroom above the capacity. Every entry point refuses it.
+    function testEntryPointsRejectANegativeLevel(
+        int256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
+        uint256 leakRate,
+        uint256 amount
+    ) external {
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        amount = bound(amount, 0, MAX_LEVEL);
+        Float levelFloat = signedFloat(bound(level, -MAX_SIGNED, -1));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLevel.selector, levelFloat));
+        this.externalHeadroomAt(levelFloat, float(checkpoint), float(timestamp), float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLevel.selector, levelFloat));
+        this.externalLevelAt(levelFloat, float(checkpoint), float(timestamp), float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLevel.selector, levelFloat));
+        this.externalFill(
+            levelFloat, float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(amount)
+        );
+    }
+
+    /// What the guard on the level prevents, stated on the numbers: without it
+    /// a level of -1 under a capacity of 10 would offer 11.
+    function testANegativeLevelCannotBuyHeadroomAboveCapacity() external {
+        Float level = signedFloat(-1);
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLevel.selector, level));
+        this.externalFill(level, float(0), float(0), float(10), float(0), float(11));
+    }
+
+    /// A negative stored timestamp is refused by every entry point.
+    function testEntryPointsRejectANegativeStoredTimestamp(
+        uint256 level,
+        int256 checkpoint,
+        uint256 timestamp,
+        uint256 capacity,
+        uint256 leakRate,
+        uint256 amount
+    ) external {
+        level = bound(level, 0, MAX_LEVEL);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        amount = bound(amount, 0, MAX_LEVEL);
+        Float checkpointFloat = signedFloat(bound(checkpoint, -MAX_SIGNED, -1));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, checkpointFloat));
+        this.externalHeadroomAt(float(level), checkpointFloat, float(timestamp), float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, checkpointFloat));
+        this.externalLevelAt(float(level), checkpointFloat, float(timestamp), float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, checkpointFloat));
+        this.externalFill(
+            float(level), checkpointFloat, float(timestamp), float(capacity), float(leakRate), float(amount)
+        );
+    }
+
+    /// A negative timestamp to read or fill at is refused by every entry point.
+    function testEntryPointsRejectANegativeTimestamp(
+        uint256 level,
+        uint256 checkpoint,
+        int256 timestamp,
+        uint256 capacity,
+        uint256 leakRate,
+        uint256 amount
+    ) external {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        amount = bound(amount, 0, MAX_LEVEL);
+        Float timestampFloat = signedFloat(bound(timestamp, -MAX_SIGNED, -1));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, timestampFloat));
+        this.externalHeadroomAt(float(level), float(checkpoint), timestampFloat, float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, timestampFloat));
+        this.externalLevelAt(float(level), float(checkpoint), timestampFloat, float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, timestampFloat));
+        this.externalFill(
+            float(level), float(checkpoint), timestampFloat, float(capacity), float(leakRate), float(amount)
+        );
+    }
+
+    /// The guards are on the sign and not the magnitude: a negative fraction
+    /// far under one unit is refused like any other negative.
+    function testANegativeFractionIsRefusedLikeAnyNegative() external {
+        Float tiny = LibDecimalFloat.packLossless(-1, -60);
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLevel.selector, tiny));
+        this.externalHeadroomAt(tiny, float(0), float(0), float(10), float(1));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, tiny));
+        this.externalHeadroomAt(float(0), tiny, float(0), float(10), float(1));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, tiny));
+        this.externalHeadroomAt(float(0), float(0), tiny, float(10), float(1));
+    }
+
     /// The other side of that guard: every non-negative capacity is accepted,
     /// at any magnitude and any scale, so the check is a check on the sign and
     /// not a narrowing of the policy space.
@@ -802,6 +912,13 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         assertEq(
             bytes32(LeakyBucketNegativeLeakRate.selector),
             bytes32(bytes4(keccak256("LeakyBucketNegativeLeakRate(bytes32)")))
+        );
+        assertEq(
+            bytes32(LeakyBucketNegativeLevel.selector), bytes32(bytes4(keccak256("LeakyBucketNegativeLevel(bytes32)")))
+        );
+        assertEq(
+            bytes32(LeakyBucketNegativeTimestamp.selector),
+            bytes32(bytes4(keccak256("LeakyBucketNegativeTimestamp(bytes32)")))
         );
     }
 }
