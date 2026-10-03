@@ -6,9 +6,8 @@ import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFl
 import {LibLeakyBucket, LeakyBucket} from "../../src/lib/LibLeakyBucket.sol";
 
 /// @title LeakyBucketScratch
-/// @notice The library entry points taken as loose words. Every helper takes
-/// the bucket as `level, checkpoint`, then the `timestamp`, then `capacity,
-/// leakRate`.
+/// @notice The library entry points for a test to inherit, each also across an
+/// external boundary for `expectRevert`.
 abstract contract LeakyBucketScratch {
     using LibDecimalFloat for Float;
 

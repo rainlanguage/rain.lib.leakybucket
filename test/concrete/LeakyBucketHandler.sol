@@ -52,9 +52,6 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     uint256 internal levelAtCheckpoint;
     uint256 internal checkpoint;
 
-    /// How many writes landed with the clock behind `checkpoint`.
-    uint256 public writesBehindCheckpoint;
-
     /// The capacity currently in force, mirrored so the invariant can read the
     /// policy without a second source of truth.
     uint256 public capacity;
@@ -95,9 +92,7 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
         leaked += elapsed() * leakRate;
         levelAtCheckpoint = expectedLevel() + added;
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < checkpoint) {
-            writesBehindCheckpoint++;
-        } else {
+        if (block.timestamp > checkpoint) {
             checkpoint = block.timestamp;
         }
     }
@@ -172,8 +167,9 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// Governance moving the sustained rate in either direction, zero
     /// included, underneath an in-flight history.
     function setLeakRate(uint256 newLeakRate) external {
-        CAP.setPolicy(MINTER, float(capacity), float(bound(newLeakRate, 0, LEAK_RATE_CEILING)));
+        newLeakRate = bound(newLeakRate, 0, LEAK_RATE_CEILING);
+        CAP.setPolicy(MINTER, float(capacity), float(newLeakRate));
         write(0);
-        leakRate = bound(newLeakRate, 0, LEAK_RATE_CEILING);
+        leakRate = newLeakRate;
     }
 }

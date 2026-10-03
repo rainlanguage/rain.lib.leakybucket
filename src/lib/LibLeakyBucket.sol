@@ -65,9 +65,12 @@ library LibLeakyBucket {
         return LibDecimalFloat.max(a.sub(b), LibDecimalFloat.FLOAT_ZERO);
     }
 
-    /// `level` after `elapsed` of leak, saturating at zero.
-    function leak(Float level, Float elapsed, Float leakRate) private pure returns (Float) {
-        return saturatingSub(level, elapsed.mul(leakRate));
+    /// `bucket` leaked to `timestamp` at `leakRate`, with nothing checked: the
+    /// level, saturating at zero, then the later of `timestamp` and the stored
+    /// timestamp. A backwards clock leaks nothing.
+    function leak(LeakyBucket memory bucket, Float timestamp, Float leakRate) private pure returns (Float, Float) {
+        Float elapsed = saturatingSub(timestamp, bucket.timestamp);
+        return (saturatingSub(bucket.level, elapsed.mul(leakRate)), LibDecimalFloat.max(timestamp, bucket.timestamp));
     }
 
     /// `capacity - levelNow`, saturating at zero.
@@ -85,14 +88,8 @@ library LibLeakyBucket {
         }
     }
 
-    /// Reverts on a bucket that cannot answer.
-    ///
-    /// A negative capacity admits no fill and a negative leak rate fills the
-    /// bucket as time passes, which is the opposite of a leak. A negative level
-    /// is headroom above the capacity. None is a stricter bucket, so none is
-    /// treated as one.
-    function checkFillableDomain(LeakyBucket memory bucket, Float timestamp) private pure {
-        checkPolicy(bucket.capacity, bucket.leakRate);
+    /// Reverts on a negative stored level, or a negative timestamp.
+    function checkLevelAndTimestamps(LeakyBucket memory bucket, Float timestamp) private pure {
         if (bucket.level.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeLevel(bucket.level);
         }
@@ -104,12 +101,19 @@ library LibLeakyBucket {
         }
     }
 
+    /// Reverts on a bucket that cannot answer.
+    ///
+    /// A negative capacity admits no fill and a negative leak rate fills the
+    /// bucket as time passes, which is the opposite of a leak. A negative level
+    /// is headroom above the capacity. None is a stricter bucket, so none is
+    /// treated as one.
+    function checkFillableDomain(LeakyBucket memory bucket, Float timestamp) private pure {
+        checkPolicy(bucket.capacity, bucket.leakRate);
+        checkLevelAndTimestamps(bucket, timestamp);
+    }
+
     /// The outstanding level at `timestamp`: the stored level leaked forward at
     /// the stored rate, a backwards clock leaking nothing.
-    ///
-    /// The only place the level is leaked. `headroomAt`, `settle`, `setPolicy`
-    /// and `fill` each reach the leak through it, so each refuses the buckets
-    /// it refuses and answers from the same level.
     ///
     /// Exported because it cannot be derived from `headroomAt`. `capacity -
     /// headroom` agrees with the level only while the level is at or under the
@@ -121,7 +125,8 @@ library LibLeakyBucket {
     /// @return The level at `timestamp`.
     function levelAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
         checkFillableDomain(bucket, timestamp);
-        return leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);
+        (Float level,) = leak(bucket, timestamp, bucket.leakRate);
+        return level;
     }
 
     /// The bucket checkpointed at `timestamp` with nothing filled: the level
@@ -138,8 +143,8 @@ library LibLeakyBucket {
     /// @return level The settled level, to store as `bucket.level`.
     /// @return checkpoint The new timestamp, to store as `bucket.timestamp`.
     function settle(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float level, Float checkpoint) {
-        level = levelAt(bucket, timestamp);
-        checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);
+        checkFillableDomain(bucket, timestamp);
+        return leak(bucket, timestamp, bucket.leakRate);
     }
 
     /// `bucket` under a new policy from `timestamp`: settled at the stored
@@ -152,10 +157,12 @@ library LibLeakyBucket {
     /// not a pause, because the time spent at zero is leaked at the restored
     /// rate. Settled first, each rate is charged for the time it was in force.
     ///
-    /// Reverts on a negative `capacity` or `leakRate`, so neither is stored. A
-    /// stored leak rate that is already negative is no rate to settle at: no
-    /// leak is credited and the checkpoint still moves, so such a bucket takes
-    /// a policy rather than refusing every call for good.
+    /// Reverts on a negative `capacity` or `leakRate`, so neither is stored,
+    /// and on a negative stored level or timestamp. The stored policy is being
+    /// replaced, so it is not checked. A stored leak rate that is already
+    /// negative is no rate to settle at: no leak is credited and the checkpoint
+    /// still moves, so such a bucket takes a policy rather than refusing every
+    /// call for good.
     /// @param bucket The bucket under its stored policy. Not modified.
     /// @param timestamp When the new policy starts.
     /// @param capacity The new capacity.
@@ -167,17 +174,10 @@ library LibLeakyBucket {
         returns (LeakyBucket memory)
     {
         checkPolicy(capacity, leakRate);
-        // The level does not depend on the capacity, so the new capacity
-        // stands in for a stored one the domain check would refuse.
-        LeakyBucket memory settled = LeakyBucket({
-            level: bucket.level,
-            timestamp: bucket.timestamp,
-            capacity: capacity,
-            leakRate: LibDecimalFloat.max(bucket.leakRate, LibDecimalFloat.FLOAT_ZERO)
-        });
-        (settled.level, settled.timestamp) = settle(settled, timestamp);
-        settled.leakRate = leakRate;
-        return settled;
+        checkLevelAndTimestamps(bucket, timestamp);
+        Float storedRate = LibDecimalFloat.max(bucket.leakRate, LibDecimalFloat.FLOAT_ZERO);
+        (Float level, Float checkpoint) = leak(bucket, timestamp, storedRate);
+        return LeakyBucket({level: level, timestamp: checkpoint, capacity: capacity, leakRate: leakRate});
     }
 
     /// The most `fill` would accept at `timestamp`: a positive headroom fits
@@ -212,7 +212,7 @@ library LibLeakyBucket {
             revert LeakyBucketNegativeAmount(amount);
         }
         Float levelNow;
-        (levelNow, checkpoint) = settle(bucket, timestamp);
+        (levelNow, checkpoint) = leak(bucket, timestamp, bucket.leakRate);
         if (amount.gt(headroomFrom(bucket.capacity, levelNow))) {
             revert LeakyBucketCapacityExceeded(bucket.capacity, levelNow, amount);
         }
