@@ -6,7 +6,7 @@
 
 [suite]
 root = "."
-command = ["sh", ".mutation-test/suite.sh"]
+command = ["sh", ".mutation-test/check.sh"]
 # forge's own tally. `--force` in the wrapper means the mutated source is always
 # recompiled, so a verdict is never scored against a stale artifact.
 proof = '(\d+) tests passed, (\d+) failed'

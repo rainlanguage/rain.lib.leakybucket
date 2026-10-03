@@ -139,8 +139,10 @@ library LibLeakyBucket {
         return levelAt(bucket.level, bucket.timestamp, timestamp, bucket.leakRate);
     }
 
-    /// The amount `fill` would accept at `timestamp`. Reverts on the same
-    /// buckets `fill` refuses.
+    /// The most `fill` would accept at `timestamp`: a positive headroom fits
+    /// in full and any amount above it is refused. Zero means nothing fits,
+    /// and `fill` refuses a zero amount, so check for zero before filling.
+    /// Reverts on the same buckets `fill` refuses.
     /// @param bucket The bucket. Not modified.
     /// @param timestamp When to read at.
     /// @return Headroom at `timestamp`.
