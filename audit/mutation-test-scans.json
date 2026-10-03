@@ -404,6 +404,7 @@
       "coveragePRs": ["#123"],
       "filed": [],
       "notes": "Clean pass: 22/22 killed, 0 survived, 0 no-run, 0 harness errors, on a green 63 baseline. The only change is in testEntryPointsRejectANegativeStoredTimestamp and testEntryPointsRejectANegativeTimestamp, whose fuzzed negative is now bounded by -MAX_SIGNED rather than by a cast of MAX_TIME that forge lint rejects as a truncating typecast. A first attempt at this pass was refused by the probe, not scored: forge reported no tests found against a build cache left by forge lint, so the baseline produced no proof of run. forge clean, then the pass re-run whole."
+    }
   },
   {
     "timestamp": "2026-10-03T14:07:47Z",
