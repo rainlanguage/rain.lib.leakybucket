@@ -235,8 +235,8 @@ stored bucket, and `setPolicy` refuses them before they are stored.
 
 ### Reading without filling
 
-There are two reads, `headroomAt` and `levelAt`, and each is exported for a
-reason of its own.
+`headroomAt` and `levelAt` read a bucket without filling it, and each is
+exported for a reason of its own.
 
 `headroomAt` is there because **a caller metering one amount through several
 buckets cannot otherwise say which of them refused it.** `fill` reverts with
@@ -266,12 +266,11 @@ an outstanding level that subtraction returns the capacity and silently
 under-reports what is owed — which is exactly the state a capacity cut leaves
 behind. A caller that wants the level has to be given it, so it is given it.
 
-The two are independent reads of the same bucket: `headroomAt` clamps a
-subtraction from the capacity, `levelAt` leaks the stored level forward. That
-they agree on every bucket at or under its capacity is a claim rather than a
-tautology, and `test/src/lib/LeakyBucketEmbedding.t.sol` pins it, including at
-the one state that separates them — a capacity cut, where `levelAt` reports what
-is owed and `capacity - headroomAt` reports the new capacity.
+`headroomAt` is the capacity less what `levelAt` reports, clamped at zero, so
+the two agree on every bucket at or under its capacity.
+`test/src/lib/LeakyBucketEmbedding.t.sol` pins that, and the one state that
+separates them — a capacity cut, where `levelAt` reports what is owed and
+`capacity - headroomAt` reports the new capacity.
 
 ## Design notes
 
@@ -302,7 +301,7 @@ levelAt(settle(bucket, t1), t2) == levelAt(bucket, t2)
 for any `t0 <= t1 <= t2`, where `bucket` is checkpointed at `t0` and
 `settle(bucket, t1)` is that bucket with both of `settle`'s returns stored: a
 checkpoint at `t1` with nothing filled leaves the level at `t2` that no
-checkpoint leaves. `fill` checkpoints through `settle`, so a fill at `t1` leaves
+checkpoint leaves. `fill` checkpoints as `settle` does, so a fill at `t1` leaves
 at `t2` what the same amount on top of the settled level leaves. Exactly, at
 every input inside the fuzz bounds above, and it is also checked end to end
 through storage: a full bucket topped up by exactly one second of leak every
@@ -343,14 +342,15 @@ Eight distinct operations in the whole file: `add`, `sub`, `mul`, `max`, `lt`,
 math, no packing, no `unchecked` block, no assembly and no hand rolled overflow
 guard anywhere in `src/`, because a bucket has no width to overflow.
 
-What is left of the old saturation is three clamps at zero, and the direction of
+What is left of the old saturation is the clamps at zero, and the direction of
 each is a security argument rather than a style choice:
 
-| Expression                   | Clamped | Because the alternative is                                                                                         |
-| ---------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
-| `level - elapsed * leakRate` | at zero | a negative level, which reads as _more_ headroom than the capacity — free headroom, and a burst above `capacity`   |
-| `timestamp - checkpoint`     | at zero | a negative elapsed multiplied into the leak, which _raises_ the level: a bucket charged for time that never passed |
-| `capacity - levelNow`        | at zero | a negative headroom handed to a caller, where the bucket is over its capacity and what fits is nothing             |
+| Expression                        | Clamped | Because the alternative is                                                                                                                                                                                            |
+| --------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `level - elapsed * leakRate`      | at zero | a negative level, which reads as _more_ headroom than the capacity — free headroom, and a burst above `capacity`                                                                                                      |
+| `timestamp - checkpoint`          | at zero | a negative elapsed multiplied into the leak, which _raises_ the level: a bucket charged for time that never passed                                                                                                    |
+| `capacity - levelNow`             | at zero | a negative headroom handed to a caller, where the bucket is over its capacity and what fits is nothing                                                                                                                |
+| stored `leakRate`, in `setPolicy` | at zero | settling at a negative rate, which _raises_ the level for time that passed, or refusing, which leaves the bucket no way to take a valid policy; no leak credited is a level at or above the one any valid rate leaves |
 
 A clock at or behind the checkpoint therefore credits **no leak**, rather than
 reverting or crediting a negative one. Reverting would let a backwards clock

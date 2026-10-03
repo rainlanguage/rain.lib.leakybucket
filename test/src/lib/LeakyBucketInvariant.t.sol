@@ -71,9 +71,34 @@ contract LeakyBucketInvariantTest is Test {
         assertLe(handler.minted(), CAPACITY + handler.leaked());
     }
 
-    /// Every run wrote behind the checkpoint at least once, so the invariants
-    /// above held across a backwards clock and not only a forward one.
-    function afterInvariant() external view {
-        assertGt(handler.writesBehindCheckpoint(), 0);
+    function assertInvariants() internal view {
+        this.invariant_headroomNeverExceedsCapacity();
+        this.invariant_levelLeaksAtTheRateInForce();
+        this.invariant_throughputIsBoundedByBurstPlusLeak();
+    }
+
+    /// The invariants across a mint, a rate change and a capacity cut that each
+    /// land behind the checkpoint. The fuzzer reaches these through `stepBack`
+    /// only when it happens to pick it.
+    function testInvariantsHoldBehindTheCheckpoint() external {
+        handler.mint(1000);
+        handler.tick(100);
+        handler.mint(500);
+        assertTrue(cap.level(ALICE).eq(asFloat(1400)));
+
+        handler.stepBack(50);
+        assertInvariants();
+        handler.mint(200);
+        assertInvariants();
+        handler.setLeakRate(5);
+        assertInvariants();
+        handler.setCapacity(2000);
+        assertInvariants();
+        assertTrue(cap.level(ALICE).eq(asFloat(1600)));
+
+        // 150 seconds past the checkpoint the writes left standing, at 5.
+        handler.tick(200);
+        assertInvariants();
+        assertTrue(cap.level(ALICE).eq(asFloat(850)));
     }
 }
