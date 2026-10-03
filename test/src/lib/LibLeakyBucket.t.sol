@@ -773,7 +773,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         capacity = bound(capacity, 0, MAX_LEVEL);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         amount = bound(amount, 0, MAX_LEVEL);
-        Float checkpointFloat = signedFloat(bound(checkpoint, -int256(MAX_TIME), -1));
+        Float checkpointFloat = signedFloat(bound(checkpoint, -MAX_SIGNED, -1));
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, checkpointFloat));
         this.externalHeadroomAt(float(level), checkpointFloat, float(timestamp), float(capacity), float(leakRate));
@@ -801,7 +801,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         capacity = bound(capacity, 0, MAX_LEVEL);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         amount = bound(amount, 0, MAX_LEVEL);
-        Float timestampFloat = signedFloat(bound(timestamp, -int256(MAX_TIME), -1));
+        Float timestampFloat = signedFloat(bound(timestamp, -MAX_SIGNED, -1));
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, timestampFloat));
         this.externalHeadroomAt(float(level), float(checkpoint), timestampFloat, float(capacity), float(leakRate));
