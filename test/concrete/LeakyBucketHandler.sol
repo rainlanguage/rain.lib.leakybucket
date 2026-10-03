@@ -136,7 +136,7 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// all.
     function setCapacity(uint256 newCapacity) external {
         capacity = bound(newCapacity, 0, capacity);
-        CAP.setPolicy(MINTER, float(capacity), float(leakRate));
+        CAP.setCapacity(MINTER, float(capacity));
     }
 
     /// Governance moving the sustained rate in either direction, zero

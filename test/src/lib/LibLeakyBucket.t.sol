@@ -772,8 +772,10 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         assertFloatEq(settledAt, float(expectedCheckpoint));
     }
 
-    /// Under an unchanged rate a settle is invisible: every later read of the
-    /// settled bucket is the read of the bucket it was settled from.
+    /// Under an unchanged rate, inside the bounds that keep the arithmetic
+    /// exact, a settle is invisible: every later read of the settled bucket is
+    /// the read of the bucket it was settled from. `FloatHazards` has the
+    /// rounding boundary, where it is not.
     function testSettleUnderAnUnchangedRateChangesNoLaterRead(
         uint256 level,
         uint256 leakRate,
@@ -791,6 +793,38 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         assertFloatEq(
             levelAt(settled, settledAt, float(t2), float(leakRate), probeCapacity()),
             levelAt(float(level), float(t0), float(t2), float(leakRate), probeCapacity())
+        );
+    }
+
+    /// A capacity written alone, with no settle. The level at any later time is
+    /// the level under the old capacity, and the headroom is the new capacity
+    /// less that level.
+    function testACapacityWriteAloneChangesNoLevel(
+        uint256 level,
+        uint256 leakRate,
+        uint256 t0,
+        uint256 gap,
+        uint256 capacityBefore,
+        uint256 capacityAfter
+    ) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        t0 = bound(t0, 0, MAX_TIME);
+        uint256 t1 = bound(gap, 0, MAX_TIME - t0) + t0;
+        capacityAfter = bound(capacityAfter, 0, MAX_LEVEL);
+
+        LeakyBucket memory written =
+            bucket(float(level), float(t0), float(bound(capacityBefore, 0, MAX_LEVEL)), float(leakRate));
+        Float levelBefore = LibLeakyBucket.levelAt(written, float(t1));
+        written.capacity = float(capacityAfter);
+
+        uint256 leaked = (t1 - t0) * leakRate;
+        uint256 expectedLevel = leaked >= level ? 0 : level - leaked;
+        assertFloatEq(levelBefore, float(expectedLevel));
+        assertFloatEq(LibLeakyBucket.levelAt(written, float(t1)), float(expectedLevel));
+        assertFloatEq(
+            LibLeakyBucket.headroomAt(written, float(t1)),
+            float(capacityAfter > expectedLevel ? capacityAfter - expectedLevel : 0)
         );
     }
 

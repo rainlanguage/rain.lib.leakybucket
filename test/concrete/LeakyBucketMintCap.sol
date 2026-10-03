@@ -30,6 +30,13 @@ contract LeakyBucketMintCap {
         bucket.leakRate = leakRate;
     }
 
+    /// A capacity written alone, with no settle.
+    function setCapacity(address minter, Float capacity) external {
+        LeakyBucket storage bucket = sBuckets[minter];
+        LibLeakyBucket.checkPolicy(capacity, bucket.leakRate);
+        bucket.capacity = capacity;
+    }
+
     /// The whole enforcement path: load the minter's bucket, hand it to `fill`,
     /// store the level and checkpoint it returns.
     function mint(Float amount) external {

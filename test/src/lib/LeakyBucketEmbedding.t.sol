@@ -184,6 +184,51 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         assertFloatEq(sCap.headroom(ALICE), capacityOver(20));
     }
 
+    /// A capacity written alone, with no settle, binds at once and leaves the
+    /// level and its checkpoint as they were. BOB takes the same history
+    /// through the setter that settles, and reads the same at every step.
+    function testACapacityWriteAloneNeedsNoSettle() external {
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+        vm.prank(BOB);
+        sCap.mint(workedCapacity());
+        vm.warp(block.timestamp + workedDrain() / 2);
+
+        sCap.setCapacity(ALICE, capacityOver(10));
+        sCap.setPolicy(BOB, capacityOver(10), workedLeakRate());
+
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
+        assertCapacityExceeded(mintRefused(sCap, ALICE, float(1)), capacityOver(10), capacityOver(2), float(1));
+        assertFloatEq(sCap.level(BOB), sCap.level(ALICE));
+        assertFloatEq(sCap.headroom(BOB), sCap.headroom(ALICE));
+
+        // The time before the write and the time after it are leaked once
+        // each, from a checkpoint the write did not move.
+        vm.warp(block.timestamp + workedDrain() / 2 - workedDrain() / 20);
+        assertFloatEq(sCap.level(ALICE), capacityOver(20));
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(20));
+        assertFloatEq(sCap.level(BOB), sCap.level(ALICE));
+        assertFloatEq(sCap.headroom(BOB), sCap.headroom(ALICE));
+
+        sCap.setCapacity(ALICE, workedCapacity());
+        Float raised = workedCapacity().sub(capacityOver(20));
+        assertFloatEq(sCap.level(ALICE), capacityOver(20));
+        assertFloatEq(sCap.headroom(ALICE), raised);
+        vm.prank(ALICE);
+        sCap.mint(raised);
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+    }
+
+    /// The unsettled capacity write refuses a negative capacity as the settled
+    /// setter does, and stores nothing.
+    function testSetCapacityRefusesANegativeCapacity(int256 capacity) external {
+        Float capacityFloat = signedFloat(bound(capacity, -MAX_SIGNED, -1));
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        sCap.setCapacity(ALICE, capacityFloat);
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
+    }
+
     /// A rate rise through a setter that settles first prices the time already
     /// spent at the old rate, so the same second offers what it offered before
     /// the write.
