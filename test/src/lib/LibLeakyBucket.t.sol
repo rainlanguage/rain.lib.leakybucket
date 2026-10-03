@@ -4,6 +4,7 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
+import {ExponentOverflow} from "rain-math-float-0.2.4/src/error/ErrDecimalFloat.sol";
 import {
     LeakyBucket,
     LeakyBucketCapacityExceeded,
@@ -777,6 +778,28 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
             levelAt(settled, settledAt, float(t2), float(leakRate), probeCapacity()),
             levelAt(float(level), float(t0), float(t2), float(leakRate), probeCapacity())
         );
+    }
+
+    /// `fill` settles before it looks at the amount, so a leak the float
+    /// arithmetic cannot hold is the same refusal at every entry point,
+    /// whatever the amount.
+    function testALeakTheArithmeticCannotHoldIsRefusedBeforeTheAmountGuards() external {
+        Float big = LibDecimalFloat.packLossless(1, type(int32).max);
+        bytes memory overflow =
+            abi.encodeWithSelector(ExponentOverflow.selector, int256(1), 2 * int256(type(int32).max));
+
+        vm.expectRevert(overflow);
+        this.externalSettle(float(1), float(0), big, float(1), big);
+        vm.expectRevert(overflow);
+        this.externalLevelAt(float(1), float(0), big, float(1), big);
+        vm.expectRevert(overflow);
+        this.externalHeadroomAt(float(1), float(0), big, float(1), big);
+        vm.expectRevert(overflow);
+        this.externalFill(float(1), float(0), big, float(1), big, float(1));
+        vm.expectRevert(overflow);
+        this.externalFill(float(1), float(0), big, float(1), big, float(0));
+        vm.expectRevert(overflow);
+        this.externalFill(float(1), float(0), big, float(1), big, signedFloat(-1));
     }
 
     /// The worked example of a rate rise. A bucket of 100 filled at second 0

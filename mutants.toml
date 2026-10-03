@@ -196,3 +196,24 @@ target = """        level = leak(bucket.level, saturatingSub(timestamp, bucket.t
         checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"""
 replacement = """        level = bucket.level;
         checkpoint = bucket.timestamp;"""
+
+# --- fill settles first, so an unanswerable bucket is refused the same way
+# whatever the amount ---
+
+[[mutants]]
+name = "M27 fill looks at the amount before it settles"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        (levelNow, checkpoint) = settle(bucket, timestamp);
+        if (amount.isZero()) {
+            revert LeakyBucketZeroAmount();
+        }
+        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeAmount(amount);
+        }"""
+replacement = """        if (amount.isZero()) {
+            revert LeakyBucketZeroAmount();
+        }
+        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeAmount(amount);
+        }
+        (levelNow, checkpoint) = settle(bucket, timestamp);"""
