@@ -73,14 +73,14 @@ replacement = "return capacity.sub(levelNow);"
 [[mutants]]
 name = "M09 a negative capacity is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (bucket.capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {"
-replacement = "if (bucket.capacity.gt(LibDecimalFloat.FLOAT_ZERO)) {"
+target = "if (capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (capacity.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 [[mutants]]
 name = "M10 a negative leak rate is accepted and a positive one refused"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (bucket.leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {"
-replacement = "if (bucket.leakRate.gt(LibDecimalFloat.FLOAT_ZERO)) {"
+target = "if (leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {"
+replacement = "if (leakRate.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 
 # --- the amount guards ---
 
@@ -217,3 +217,12 @@ replacement = """        if (amount.isZero()) {
             revert LeakyBucketNegativeAmount(amount);
         }
         (levelNow, checkpoint) = settle(bucket, timestamp);"""
+
+# --- the policy check, which the domain check is written in terms of ---
+
+[[mutants]]
+name = "M28 the domain check does not check the policy"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        checkPolicy(bucket.capacity, bucket.leakRate);
+        if (bucket.level.lt("""
+replacement = """        if (bucket.level.lt("""

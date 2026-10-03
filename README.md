@@ -171,9 +171,14 @@ So settle before changing `leakRate`, in the same transaction: `settle` reads
 the level at the old rate and returns it with the later of the timestamp and the
 stored one; store both, then write the new rate.
 
+Call `checkPolicy` on a `capacity` and a `leakRate` before storing either, in
+every setter. It reverts on a negative one with the error `fill` would raise;
+zero passes.
+
 ```solidity
 function setLeakRate(address minter, Float leakRate) external onlyGovernance {
     LeakyBucket storage bucket = sBuckets[minter];
+    LibLeakyBucket.checkPolicy(bucket.capacity, leakRate);
     Float timestamp = LibDecimalFloat.packLossless(int256(block.timestamp), 0);
     (Float level, Float checkpoint) = LibLeakyBucket.settle(bucket, timestamp);
     bucket.level = level;
@@ -182,9 +187,8 @@ function setLeakRate(address minter, Float leakRate) external onlyGovernance {
 }
 ```
 
-`settle` refuses the buckets `fill` refuses, so a bucket already holding a
-negative `capacity` or `leakRate` cannot be settled; it could not be filled or
-read either, and has no history at that policy to preserve.
+`settle` refuses the buckets `fill` refuses, so a setter that stores a negative
+`capacity` or `leakRate` reverts on every later call for that bucket.
 
 A `capacity` change needs no settling, because the level does not depend on the
 capacity. Two properties make it safe to land at an arbitrary moment:
@@ -220,10 +224,9 @@ could not have held at all — to the last unit and rejects the unit after it.
 What is refused instead is the sign, on both policy fields, because neither
 negative is a stricter bucket: a negative `capacity` admits no fill at all, and
 a negative `leakRate` fills the bucket as time passes, which is the opposite of
-a leak. Both reads and the fill refuse them by name. The harness in
-`test/concrete/LeakyBucketMintCap.sol` therefore has a `setPolicy` with no bound
-check in it at all, where the old one had to reject a capacity it could not
-pack.
+a leak. Both reads and the fill refuse them by name, and `setPolicy` in
+`test/concrete/LeakyBucketMintCap.sol` refuses them with `checkPolicy` before
+storing.
 
 ### Reading without filling
 

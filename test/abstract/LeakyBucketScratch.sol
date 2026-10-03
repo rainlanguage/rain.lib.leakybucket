@@ -79,6 +79,11 @@ abstract contract LeakyBucketScratch {
         return settle(level, checkpoint, timestamp, capacity, leakRate);
     }
 
+    /// `checkPolicy` across an external boundary, for `expectRevert`.
+    function externalCheckPolicy(Float capacity, Float leakRate) external pure {
+        LibLeakyBucket.checkPolicy(capacity, leakRate);
+    }
+
     /// `fill` across an external boundary, for `expectRevert`.
     function externalFill(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate, Float amount)
         external

@@ -75,6 +75,19 @@ library LibLeakyBucket {
         return saturatingSub(capacity, levelNow);
     }
 
+    /// Reverts on a negative `capacity` or `leakRate`. Call it on a policy
+    /// before storing it: `settle` reverts on a stored policy this refuses.
+    /// @param capacity The capacity to be stored.
+    /// @param leakRate The leak rate to be stored.
+    function checkPolicy(Float capacity, Float leakRate) internal pure {
+        if (capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeCapacity(capacity);
+        }
+        if (leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeLeakRate(leakRate);
+        }
+    }
+
     /// Reverts on a bucket that cannot answer.
     ///
     /// A negative capacity admits no fill and a negative leak rate fills the
@@ -82,12 +95,7 @@ library LibLeakyBucket {
     /// is headroom above the capacity. None is a stricter bucket, so none is
     /// treated as one.
     function checkFillableDomain(LeakyBucket memory bucket, Float timestamp) private pure {
-        if (bucket.capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {
-            revert LeakyBucketNegativeCapacity(bucket.capacity);
-        }
-        if (bucket.leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {
-            revert LeakyBucketNegativeLeakRate(bucket.leakRate);
-        }
+        checkPolicy(bucket.capacity, bucket.leakRate);
         if (bucket.level.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeLevel(bucket.level);
         }
@@ -114,9 +122,9 @@ library LibLeakyBucket {
     /// checkpoint is priced at whatever rate is read. Writing a new rate alone
     /// re-rates that interval: raising it hands out headroom neither policy
     /// earned, and a zero rate is not a pause, because the time spent at zero
-    /// is leaked at the restored rate. Store both returns and then write the
-    /// new rate, in one transaction, and each rate is charged for exactly the
-    /// time it was in force.
+    /// is leaked at the restored rate. `checkPolicy` the new rate, store both
+    /// returns and then write the new rate, in one transaction, and each rate
+    /// is charged for exactly the time it was in force.
     /// @param bucket The bucket, still carrying the old rate. Not modified.
     /// @param timestamp When to settle at.
     /// @return level The settled level, to store as `bucket.level`.
