@@ -404,6 +404,28 @@
       "coveragePRs": ["#123"],
       "filed": [],
       "notes": "Clean pass: 22/22 killed, 0 survived, 0 no-run, 0 harness errors, on a green 63 baseline. The only change is in testEntryPointsRejectANegativeStoredTimestamp and testEntryPointsRejectANegativeTimestamp, whose fuzzed negative is now bounded by -MAX_SIGNED rather than by a cast of MAX_TIME that forge lint rejects as a truncating typecast. A first attempt at this pass was refused by the probe, not scored: forge reported no tests found against a build cache left by forge lint, so the baseline produced no proof of run. forge clean, then the pass re-run whole."
+  },
+  {
+    "timestamp": "2026-10-03T14:07:47Z",
+    "commit": "0d5c36748c8374a349693ea55dd84cbe391197e2",
+    "testsAfterCommit": "0d5c36748c8374a349693ea55dd84cbe391197e2",
+    "publishedTag": "sol-v0.4.2",
+    "commitsAheadOfTag": 6,
+    "scope": "re-probe of src/lib/LibLeakyBucket.sol after main was merged into #123. The merge brought in the headroomAt NatSpec rewording from #122; no executable line in src moved and test is as #123 had it.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 22,
+      "mutantsKilledByPreExistingSuite": 22,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 22,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 63,
+      "testsAfter": 63,
+      "coveragePRs": ["#123"],
+      "filed": [],
+      "notes": "Clean pass: 22/22 killed, 0 survived, 0 no-run, 0 harness errors, on a green 63 baseline, from a fresh clone. The mutant set is the 22 of #123 and the suite command is the tracked .mutation-test/check.sh with the --force #122 gave it; both sides of the merge had already repointed mutants.toml at it. This pass was mutation only: no adversarial enumeration was repeated, because no behaviour changed in the merge."
     }
   }
 ]
