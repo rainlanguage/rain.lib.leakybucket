@@ -520,5 +520,28 @@
       "filed": [],
       "notes": "The before figures hold at a9fdc0d, the parent of the named commit: the source change with the test files as f9089e8 left them, probed in a separate clone. commit names the child because audit/check-scan-freshness.sh requires the newest record to match HEAD in src/ and test/. At the parent: green 71 baseline, mutation-probe over mutants.toml M01 to M28, 28/28 killed, 0 survived, 0 no-run, 0 harness errors. At the named commit: green 75 baseline, 28/28 killed, 0 survived, 0 no-run, 0 harness errors. M09 and M10 were retargeted at the lines as they read inside checkPolicy. M28 is new: the domain check stops calling checkPolicy. No src mutant distinguishes a setter that calls checkPolicy from one that does not, so the 28 were already killed before the four new tests; what the new tests add is outside mutants.toml, whose targets are src/ only. It was probed once at the named commit with a single mutant, S01, in an untracked mutants file with the same suite command: the checkPolicy call deleted from setPolicy in the harness, green 75 baseline, 1/1 killed. The tool printed no killing test names for S01, M27 or M28. S01 was not probed against the pre-existing suite. The new tests are testSetPolicyRefusesANegativeCapacity, testSetPolicyRefusesANegativeLeakRate, testSetPolicyAcceptsAZeroPolicy and testCheckPolicyAcceptsANonNegativePolicy, with checkPolicy added to testEntryPointsRejectANegativeCapacity and testEntryPointsRejectANegativeLeakRate. No adversarial candidate was raised."
     }
+  },
+  {
+    "timestamp": "2026-10-03T20:59:55Z",
+    "commit": "970e5b8eddbf6e608b3aa9e9d2e460e2c938e8f4",
+    "testsAfterCommit": "970e5b8eddbf6e608b3aa9e9d2e460e2c938e8f4",
+    "publishedTag": "sol-v0.4.3",
+    "commitsAheadOfTag": 16,
+    "scope": "src/lib/LibLeakyBucket.sol after the domain check and the leak moved into one private function, leakedLevel, which settle, levelAt and headroomAt call and fill reaches through settle; and the harness test/concrete/LeakyBucketMintCap.sol setCapacity, a capacity write with no settle.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 28,
+      "mutantsKilledByPreExistingSuite": 28,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 28,
+      "candidates": 1,
+      "confirmed": 0,
+      "testsBefore": 75,
+      "testsAfter": 79,
+      "coveragePRs": ["#124"],
+      "filed": ["#125"],
+      "notes": "The before figures hold at 02ee251, the parent of the named commit: the source change with the test files as 9f58a63 left them, probed in a separate clone. commit names the child because audit/check-scan-freshness.sh requires the newest record to match HEAD in src/ and test/. At the parent: green 75 baseline, mutation-probe over mutants.toml M01 to M28, 28/28 killed, 0 survived, 0 no-run, 0 harness errors. At the named commit: green 79 baseline, 28/28 killed, 0 survived, 0 no-run, 0 harness errors. Both probes finished just before the timestamp. M05, M06, M16, M17, M23, M24 and M26 were retargeted at the lines as they read after the move; M23 and M24 were renamed, since the lines they break are now in leakedLevel rather than settle. No mutant was added. The tool printed no killing test names for M17, M27 or M28 at the named commit. The four new tests are testACapacityWriteAloneNeedsNoSettle, testSetCapacityRefusesANegativeCapacity, testACapacityWriteAloneChangesNoLevel and testASettleBelowTheLastDigitOfTheLevelShowsInLaterReads; the invariant handler's setCapacity now makes the unsettled write. None was needed to kill a src mutant, and the harness setCapacity is outside mutants.toml and was not probed. One adversarial candidate, filed as #125 and not triaged: a leak below the level's last digit takes a whole digit off the level at each checkpoint, the permissive direction, or further below takes nothing; the last test named pins the values as they are and asserts nothing about which is right."
+    }
   }
 ]
