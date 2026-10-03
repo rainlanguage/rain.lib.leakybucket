@@ -11,4 +11,4 @@
 set -uo pipefail
 export FOUNDRY_DISABLE_NIGHTLY_WARNING=1
 # `forge` comes from the flake devShell; run this under `nix develop -c`.
-exec forge test --fuzz-seed 0xa11ce10ea11ce10e
+exec forge test --force --fuzz-seed 0xa11ce10ea11ce10e
