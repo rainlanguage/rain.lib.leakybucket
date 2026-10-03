@@ -6,7 +6,7 @@
 
 [suite]
 root = "."
-command = ["sh", ".mutation-test/check.sh"]
+command = ["bash", ".mutation-test/check.sh"]
 # forge's own tally. `--force` in the wrapper means the mutated source is always
 # recompiled, so a verdict is never scored against a stale artifact.
 proof = '(\d+) tests passed, (\d+) failed'
@@ -46,14 +46,14 @@ replacement = "return saturatingSub(level, elapsed);"
 [[mutants]]
 name = "M05 elapsed does not saturate, so a backwards clock credits negative leak"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return leak(level, saturatingSub(timestamp, checkpoint), leakRate);"
-replacement = "return leak(level, timestamp.sub(checkpoint), leakRate);"
+target = "level = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);"
+replacement = "level = leak(bucket.level, timestamp.sub(bucket.timestamp), bucket.leakRate);"
 
 [[mutants]]
 name = "M06 elapsed is measured backwards"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return leak(level, saturatingSub(timestamp, checkpoint), leakRate);"
-replacement = "return leak(level, saturatingSub(checkpoint, timestamp), leakRate);"
+target = "level = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);"
+replacement = "level = leak(bucket.level, saturatingSub(bucket.timestamp, timestamp), bucket.leakRate);"
 
 # --- the headroom ---
 
@@ -99,14 +99,17 @@ replacement = "if (amount.gt(LibDecimalFloat.FLOAT_ZERO)) {"
 [[mutants]]
 name = "M13 an amount exactly at the headroom is refused"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (amount.gt(headroom)) {"
-replacement = "if (amount.gte(headroom)) {"
+target = "if (amount.gt(headroomFrom(bucket.capacity, levelNow))) {"
+replacement = "if (amount.gte(headroomFrom(bucket.capacity, levelNow))) {"
 
 [[mutants]]
 name = "M14 the fill does not add the amount to the level"
 file = "src/lib/LibLeakyBucket.sol"
-target = "        return filled;"
-replacement = "        return levelNow;"
+target = """            revert LeakyBucketAmountNotCredited(levelNow, amount);
+        }"""
+replacement = """            revert LeakyBucketAmountNotCredited(levelNow, amount);
+        }
+        level = levelNow;"""
 
 # --- the checkpoint ---
 
@@ -116,35 +119,32 @@ file = "src/lib/LibLeakyBucket.sol"
 target = "checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"
 replacement = "checkpoint = LibDecimalFloat.min(timestamp, bucket.timestamp);"
 
-# --- the domain check on each entry point, so a read cannot answer where a fill
-# refuses. Each target carries its own function's following line, because the
-# call itself appears three times. ---
+# --- each entry point reaches the domain check through `settle`. Each mutant
+# here has one entry point stop calling `settle` and repeat its steps without
+# the check, which is the divergence the single path exists to prevent. ---
 
 [[mutants]]
 name = "M16 headroomAt answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkFillableDomain(bucket, timestamp);
-        return headroomFrom("""
-replacement = """        return headroomFrom("""
+target = "return headroomFrom(bucket.capacity, levelAt(bucket, timestamp));"
+replacement = "return headroomFrom(bucket.capacity, leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate));"
 
 [[mutants]]
 name = "M17 levelAt answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkFillableDomain(bucket, timestamp);
-        return levelAt(bucket.level"""
-replacement = """        return levelAt(bucket.level"""
+target = "(Float level,) = settle(bucket, timestamp);"
+replacement = "Float level = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);"
 
 [[mutants]]
 name = "M18 fill does not check the domain before filling"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkFillableDomain(bucket, timestamp);
-        level = fillAt("""
-replacement = """        level = fillAt("""
+target = "(levelNow, checkpoint) = settle(bucket, timestamp);"
+replacement = "levelNow = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate); checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"
 
 [[mutants]]
 name = "M19 an amount too small to be recorded is accepted and charges nothing"
 file = "src/lib/LibLeakyBucket.sol"
-target = "if (!filled.gt(levelNow)) {"
+target = "if (!level.gt(levelNow)) {"
 replacement = "if (false) {"
 
 # --- the negative level and timestamps (#115). Each drops one check, so only a
@@ -167,3 +167,53 @@ name = "M22 a negative timestamp to read or fill at is accepted"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (timestamp.lt(LibDecimalFloat.FLOAT_ZERO)) {"
 replacement = "if (false) {"
+
+# --- settle, which every entry point above is written in terms of ---
+
+[[mutants]]
+name = "M23 settle does not check the domain, so no entry point does"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        checkFillableDomain(bucket, timestamp);
+        level = leak("""
+replacement = """        level = leak("""
+
+[[mutants]]
+name = "M24 settle returns the stored level without leaking it"
+file = "src/lib/LibLeakyBucket.sol"
+target = "level = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);"
+replacement = "level = bucket.level;"
+
+[[mutants]]
+name = "M25 settle at a backwards clock moves the checkpoint back"
+file = "src/lib/LibLeakyBucket.sol"
+target = "checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"
+replacement = "checkpoint = timestamp;"
+
+[[mutants]]
+name = "M26 settle settles nothing, so a rate change re-rates the whole interval"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        level = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);
+        checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"""
+replacement = """        level = bucket.level;
+        checkpoint = bucket.timestamp;"""
+
+# --- fill settles first, so an unanswerable bucket is refused the same way
+# whatever the amount ---
+
+[[mutants]]
+name = "M27 fill looks at the amount before it settles"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        (levelNow, checkpoint) = settle(bucket, timestamp);
+        if (amount.isZero()) {
+            revert LeakyBucketZeroAmount();
+        }
+        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeAmount(amount);
+        }"""
+replacement = """        if (amount.isZero()) {
+            revert LeakyBucketZeroAmount();
+        }
+        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeAmount(amount);
+        }
+        (levelNow, checkpoint) = settle(bucket, timestamp);"""

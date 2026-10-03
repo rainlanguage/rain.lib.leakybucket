@@ -32,13 +32,24 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// The one minter whose bucket this handler drives.
     address internal immutable MINTER;
 
-    /// Held fixed for the whole run, so the throughput bound the invariant
-    /// asserts stays exact.
-    Float internal immutable LEAK_RATE;
+    /// The largest leak rate the fuzzer may set, and the longest `tick`. Both
+    /// small against the starting capacity, so a history can hold a level that
+    /// has not fully drained when the rate moves. Past a full drain a re-rated
+    /// interval and a correctly rated one read the same.
+    uint256 internal constant LEAK_RATE_CEILING = 10;
+    uint256 internal constant TICK_CEILING = 3600;
 
-    /// The timestamp the run started at, for the elapsed window in the
-    /// throughput bound.
-    uint256 public immutable START;
+    /// The leak rate currently in force.
+    uint256 public leakRate;
+
+    /// The most the bucket can have leaked so far: every wait, priced at the
+    /// rate in force while it passed.
+    uint256 public leaked;
+
+    /// The level the bucket should hold now, kept in words: each mint added,
+    /// each wait leaked at the rate in force while it passed, floored at zero.
+    /// A rate change that re-rated time already spent parts the cap from this.
+    uint256 public expectedLevel;
 
     /// The capacity currently in force, mirrored so the invariant can read the
     /// policy without a second source of truth.
@@ -54,12 +65,11 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     // harness with no funds and no authority, and a zero check would refuse an
     // input the library itself accepts.
     // forge-lint: disable-next-line(missing-zero-check)
-    constructor(LeakyBucketMintCap cap, address minter, uint256 capacity_, uint256 leakRate) {
+    constructor(LeakyBucketMintCap cap, address minter, uint256 initialCapacity, uint256 initialLeakRate) {
         CAP = cap;
         MINTER = minter;
-        LEAK_RATE = float(leakRate);
-        capacity = capacity_;
-        START = block.timestamp;
+        leakRate = initialLeakRate;
+        capacity = initialCapacity;
     }
 
     /// A mint of an arbitrary size, at whatever point in the history the fuzzer
@@ -76,6 +86,7 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
             // level by exactly what was minted.
             assertTrue(amountFloat.lte(headroomBefore));
             minted += amount;
+            expectedLevel += amount;
             assertTrue(CAP.level(MINTER).eq(levelBefore.add(amountFloat)));
         } catch (bytes memory reason) {
             // It was refused, so it must not have fitted, it must have been
@@ -105,14 +116,33 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// Time passing between calls, which is the only thing that refills the
     /// bucket.
     function wait(uint32 gap) external {
+        pass(gap);
+    }
+
+    /// A wait short enough to leave part of a level standing.
+    function tick(uint256 gap) external {
+        pass(bound(gap, 0, TICK_CEILING));
+    }
+
+    function pass(uint256 gap) internal {
+        uint256 leak = gap * leakRate;
+        leaked += leak;
+        expectedLevel = leak >= expectedLevel ? 0 : expectedLevel - leak;
         vm.warp(block.timestamp + gap);
     }
 
     /// Governance moving the burst around underneath an in-flight history,
     /// which is the case a fixed loop with a constant policy cannot reach at
     /// all.
-    function setCapacity(uint256 capacity_) external {
-        capacity = bound(capacity_, 0, capacity);
-        CAP.setPolicy(MINTER, float(capacity), LEAK_RATE);
+    function setCapacity(uint256 newCapacity) external {
+        capacity = bound(newCapacity, 0, capacity);
+        CAP.setPolicy(MINTER, float(capacity), float(leakRate));
+    }
+
+    /// Governance moving the sustained rate in either direction, zero
+    /// included, underneath an in-flight history.
+    function setLeakRate(uint256 newLeakRate) external {
+        leakRate = bound(newLeakRate, 0, LEAK_RATE_CEILING);
+        CAP.setPolicy(MINTER, float(capacity), float(leakRate));
     }
 }

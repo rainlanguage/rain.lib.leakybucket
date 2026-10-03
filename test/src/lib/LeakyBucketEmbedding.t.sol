@@ -82,7 +82,6 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         // leak each second: every mint fits, and the bucket stays full.
         LeakyBucketMintCap other = new LeakyBucketMintCap();
         other.setPolicy(BOB, workedCapacity(), workedLeakRate());
-        vm.warp(1_700_000_000);
         vm.prank(BOB);
         other.mint(workedCapacity());
         for (uint256 i = 0; i < workedDrain() / 2; i++) {
@@ -179,6 +178,49 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         vm.warp(block.timestamp + workedDrain() / 2 - workedDrain() / 20);
         assertFloatEq(sCap.level(ALICE), capacityOver(20));
         assertFloatEq(sCap.headroom(ALICE), capacityOver(20));
+    }
+
+    /// A rate rise through a setter that settles first prices the time already
+    /// spent at the old rate, so the same second offers what it offered before
+    /// the write.
+    function testRateRiseDoesNotReRateThePast() external {
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+        vm.warp(block.timestamp + workedDrain() / 10);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(10));
+
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate().mul(float(10)));
+
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(10));
+        assertFloatEq(sCap.level(ALICE), workedCapacity().sub(capacityOver(10)));
+        assertCapacityExceeded(
+            mintRefused(sCap, ALICE, capacityOver(10).add(float(1))),
+            workedCapacity(),
+            workedCapacity().sub(capacityOver(10)),
+            capacityOver(10).add(float(1))
+        );
+
+        // From here the new rate applies: ten units a second.
+        vm.warp(block.timestamp + 1);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(10).add(float(10)));
+    }
+
+    /// A zero rate set and lifted through that setter is a pause: the time
+    /// spent at zero leaks nothing when the rate comes back.
+    function testZeroRateIsAPause() external {
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+
+        sCap.setPolicy(ALICE, workedCapacity(), float(0));
+        vm.warp(block.timestamp + workedDrain() * 10);
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate());
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertCapacityExceeded(mintRefused(sCap, ALICE, float(1)), workedCapacity(), workedCapacity(), float(1));
+
+        vm.warp(block.timestamp + workedDrain() / 2);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
     }
 
     /// The second a given amount fits again is exactly the second the leak pays
