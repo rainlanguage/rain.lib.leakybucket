@@ -336,5 +336,28 @@
       "filed": [],
       "notes": "Clean pass: 19/19 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. The review change that matters to this record is the scratch levelAt helper, which derived the level as capacity minus headroomAt and so had 26 assertions spelling levelAt exercising headroomAt instead. That is why M17, dropping the domain check from levelAt, was the lone survivor of the 2026-09-29T23:40 scan. The helper calls the export now and M17 is killed. Values did not move: probeCapacity is 1e40 against a MAX_LEVEL of 2**128-1, so the level never exceeds the capacity and the round trip through the headroom was exact at those magnitudes; what changed is which function the assertions reach. Also in this pass: sliceReason no longer underflows on revert data shorter than four bytes, and the per-file copies of float, signedFloat, capacityOver, probeCapacity, the float assertions, fillRefused and assertCapacityExceeded are consolidated into FloatWords.sol, WorkedPolicy.sol and a new LeakyBucketAsserts, the copies having already drifted apart in their comments. testsAfter is unchanged at 58 because nothing was added, only relocated and repointed."
     }
+  },
+  {
+    "timestamp": "2026-10-03T13:13:53Z",
+    "commit": "e6d0a40a6cf88c686ac60a65901588f8e26e4416",
+    "testsAfterCommit": "e6d0a40a6cf88c686ac60a65901588f8e26e4416",
+    "publishedTag": "sol-v0.4.1",
+    "commitsAheadOfTag": 5,
+    "scope": "src/lib/LibLeakyBucket.sol after adding settle for #119 (Protofire Sep-2026 L01). Narrowed to that change: the 19 existing mutants re-probed because src and test both moved, plus 5 new mutants on settle.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 24,
+      "mutantsKilledByPreExistingSuite": 21,
+      "mutantsSurvivedPreExistingSuite": 2,
+      "mutantsKilledAfter": 24,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 58,
+      "testsAfter": 65,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Final pass at the named commit: 24/24 killed, 0 survived, 0 no-run, 0 harness errors, on a green 65 baseline. The before figures are from a pass at 95070eb, the commit that added settle with the harness setPolicy calling it and no test of settle itself: green 58 baseline, 23 mutants probed, 21 killed. The two survivors were M20, settle without the domain check, and M23, settle moving the checkpoint back at a backwards clock; M21 and M22 were killed there only by testCapacityCutBindsImmediately, through the harness. M24, settle as a no-op, was written after that pass and so has no before verdict; the three figures therefore sum to 23, not 24. A separate probe of M21, M22 and M24 against LeakyBucketInvariantTest alone found all three surviving the first version of the setLeakRate handler action, whose only rate-sensitive check was a cumulative throughput bound that one long wait makes vacuous. The handler now keeps the expected level in integer words and the invariant holds the cap's level to it; the same three-mutant probe against the invariant contract alone then killed all three. mutants.toml named .mutation-test/suite.sh, which is not in the repository; it now names the tracked .mutation-test/check.sh, which runs forge test with the fixed seed and without --force. One existing test changed: testLeakIsCreditedOnceNotPerCall set a policy and then warped the clock back behind that write, which the settled checkpoint treats as a backwards clock and credits nothing for; the backwards warp is removed and its assertions are unchanged. No adversarial candidate was filed."
+    }
   }
 ]
