@@ -359,5 +359,28 @@
       "filed": [],
       "notes": "The before numbers hold at f954fe853762551d07b83e21d9a1f9ef374f4257, the parent of the named commit: the new guards with the test tree as main had it. commit names the child because audit/check-scan-freshness.sh requires the newest record's commit to match HEAD in src/ and test/. At f954fe8: green 58 baseline, 19/22 killed, survivors M20, M21 and M22, each of which drops one of the three new checks. At 25e49b1: green 63 baseline, 22/22 killed, 0 no-run, 0 harness errors. M20 is killed by testANegativeLevelCannotBuyHeadroomAboveCapacity and testANegativeFractionIsRefusedLikeAnyNegative, M21 and M22 by testANegativeFractionIsRefusedLikeAnyNegative; the probe names the first failures only, and the three fuzzed testEntryPointsReject tests cover the same checks. M09, M10 and M16 to M18 were retargeted at the new spelling of the lines they mutate, with no change to the mutation. mutants.toml named .mutation-test/suite.sh, which is not tracked, so the suite command now names the tracked .mutation-test/check.sh; check.sh passes no --force, and forge recompiled the mutated source on its own, which M01 to M19 dying confirms. The one adversarial candidate is not new and is not filed again: rounding direction. rain-math-float 0.2.4 truncates toward zero in add, sub and mul, so level + amount is understated when it rounds and level - drain can go either way, against the ruling on #115 that the level is never understated. It stays open on #115 because the float library exposes no directed rounding to fix it with."
     }
+  },
+  {
+    "timestamp": "2026-10-03T13:20:00Z",
+    "commit": "4e60fed7993806a615dc21be2bbb249aedc08da5",
+    "testsAfterCommit": "4e60fed7993806a615dc21be2bbb249aedc08da5",
+    "publishedTag": "sol-v0.4.1",
+    "commitsAheadOfTag": 6,
+    "scope": "re-probe of src/lib/LibLeakyBucket.sol after a lint fix to two tests on #123. src is unchanged since the previous entry; the test tree moved, so the matrix is re-established rather than assumed.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 22,
+      "mutantsKilledByPreExistingSuite": 22,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 22,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 63,
+      "testsAfter": 63,
+      "coveragePRs": ["#123"],
+      "filed": [],
+      "notes": "Clean pass: 22/22 killed, 0 survived, 0 no-run, 0 harness errors, on a green 63 baseline. The only change is in testEntryPointsRejectANegativeStoredTimestamp and testEntryPointsRejectANegativeTimestamp, whose fuzzed negative is now bounded by -MAX_SIGNED rather than by a cast of MAX_TIME that forge lint rejects as a truncating typecast. A first attempt at this pass was refused by the probe, not scored: forge reported no tests found against a build cache left by forge lint, so the baseline produced no proof of run. forge clean, then the pass re-run whole."
+    }
   }
 ]
