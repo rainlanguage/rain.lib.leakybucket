@@ -27,8 +27,8 @@ contract LeakyBucketMintCap {
     /// in force and the new one starts from now.
     function setPolicy(address minter, Float capacity, Float leakRate) external {
         LeakyBucket storage bucket = sBuckets[minter];
-        (Float level_, Float checkpoint) = LibLeakyBucket.settle(bucket, now_());
-        bucket.level = level_;
+        (Float newLevel, Float checkpoint) = LibLeakyBucket.settle(bucket, now_());
+        bucket.level = newLevel;
         bucket.timestamp = checkpoint;
         bucket.capacity = capacity;
         bucket.leakRate = leakRate;
@@ -37,8 +37,8 @@ contract LeakyBucketMintCap {
     /// The whole enforcement path: load the minter's bucket, hand it to `fill`,
     /// store the level and checkpoint it returns.
     function mint(Float amount) external {
-        (Float level_, Float checkpoint) = LibLeakyBucket.fill(sBuckets[msg.sender], now_(), amount);
-        sBuckets[msg.sender].level = level_;
+        (Float newLevel, Float checkpoint) = LibLeakyBucket.fill(sBuckets[msg.sender], now_(), amount);
+        sBuckets[msg.sender].level = newLevel;
         sBuckets[msg.sender].timestamp = checkpoint;
         totalMinted = totalMinted.add(amount);
     }

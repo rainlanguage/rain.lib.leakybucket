@@ -58,8 +58,8 @@ contract FloatHazardsTest is Test {
         LeakyBucket memory bucket = bucketOf(level, f(1, 60));
         Float amount = f(1, exponent);
 
-        try this.fillExternal(bucket, f(0, 0), amount) returns (Float after_, Float) {
-            assertTrue(after_.gt(level), "a fill that landed did not raise the level");
+        try this.fillExternal(bucket, f(0, 0), amount) returns (Float filled, Float) {
+            assertTrue(filled.gt(level), "a fill that landed did not raise the level");
         } catch {
             // A refusal is a fine answer. Charging nothing is not.
         }

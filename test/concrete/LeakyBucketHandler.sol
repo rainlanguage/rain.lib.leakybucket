@@ -65,11 +65,11 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     // harness with no funds and no authority, and a zero check would refuse an
     // input the library itself accepts.
     // forge-lint: disable-next-line(missing-zero-check)
-    constructor(LeakyBucketMintCap cap, address minter, uint256 capacity_, uint256 leakRate_) {
+    constructor(LeakyBucketMintCap cap, address minter, uint256 initialCapacity, uint256 initialLeakRate) {
         CAP = cap;
         MINTER = minter;
-        leakRate = leakRate_;
-        capacity = capacity_;
+        leakRate = initialLeakRate;
+        capacity = initialCapacity;
     }
 
     /// A mint of an arbitrary size, at whatever point in the history the fuzzer
@@ -134,15 +134,15 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// Governance moving the burst around underneath an in-flight history,
     /// which is the case a fixed loop with a constant policy cannot reach at
     /// all.
-    function setCapacity(uint256 capacity_) external {
-        capacity = bound(capacity_, 0, capacity);
+    function setCapacity(uint256 newCapacity) external {
+        capacity = bound(newCapacity, 0, capacity);
         CAP.setPolicy(MINTER, float(capacity), float(leakRate));
     }
 
     /// Governance moving the sustained rate in either direction, zero
     /// included, underneath an in-flight history.
-    function setLeakRate(uint256 leakRate_) external {
-        leakRate = bound(leakRate_, 0, LEAK_RATE_CEILING);
+    function setLeakRate(uint256 newLeakRate) external {
+        leakRate = bound(newLeakRate, 0, LEAK_RATE_CEILING);
         CAP.setPolicy(MINTER, float(capacity), float(leakRate));
     }
 }
