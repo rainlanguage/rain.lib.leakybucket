@@ -337,10 +337,16 @@ visible. Round down, so the on chain rate is never faster than the policy.
 
 Every operation is a `Float` operation from
 [`rain.math.float`](https://github.com/rainlanguage/rain.math.float) at `0.2.4`.
-Eight distinct operations in the whole file: `add`, `sub`, `mul`, `max`, `lt`,
-`gt`, `isZero` and the `packLossless` that spells zero. There is no saturating
-math, no packing, no `unchecked` block, no assembly and no hand rolled overflow
-guard anywhere in `src/`, because a bucket has no width to overflow.
+There is no `unchecked` block, no assembly and no hand rolled overflow guard
+anywhere in `src/`.
+
+The leak alone is computed below the packed surface, through
+`LibDecimalFloatImplementation`. `LibDecimalFloat.mul` reverts when the exponent
+of a product does not fit a `Float`, and a stored `leakRate` that does that
+against every later timestamp would refuse every call for good, `setPolicy`
+included. Multiplied and compared unpacked, where the exponent has 256 bits,
+such a leak is at or above the level like any other and drains the bucket to
+zero.
 
 What is left of the old saturation is the clamps at zero, and the direction of
 each is a security argument rather than a style choice:
@@ -509,9 +515,8 @@ the ones fuzzed in `test/src/lib/`:
   it — a negative capacity, leak rate, level or timestamp — are refused by name
   at `levelAt`, `headroomAt`, `settle` and `fill`. `fill` refuses a zero and a
   negative amount by name on every bucket inside the domain, before the leak is
-  computed; a leak the arithmetic cannot hold is that arithmetic's refusal at
-  every entry point that computes it. Every error's selector is pinned to its
-  signature.
+  computed; a leak no `Float` holds drains the bucket at every entry point.
+  Every error's selector is pinned to its signature.
 - `headroomAt` and `fill` agree at every input either will answer, and refuse
   exactly the same buckets.
 - `levelAt` reports what is owed rather than what fits, which is the one thing

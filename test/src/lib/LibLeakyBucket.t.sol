@@ -4,7 +4,7 @@ pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
-import {ExponentOverflow} from "rain-math-float-0.2.4/src/error/ErrDecimalFloat.sol";
+import {ExponentOverflow, ExponentUnderflow} from "rain-math-float-0.2.4/src/error/ErrDecimalFloat.sol";
 import {
     LeakyBucket,
     LeakyBucketCapacityExceeded,
@@ -923,10 +923,10 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         );
     }
 
-    /// The level does not depend on the capacity, which is what lets
-    /// `setPolicy` settle under the new one. With the capacity field replaced
-    /// and nothing else, the level at any later time is the level under the
-    /// old capacity, and the headroom is the new capacity less that level.
+    /// The level does not depend on the capacity. With the capacity field
+    /// replaced and nothing else, the level at any later time is the level
+    /// under the old capacity, and the headroom is the new capacity less that
+    /// level.
     function testTheLevelDoesNotDependOnTheCapacity(
         uint256 level,
         uint256 leakRate,
@@ -956,69 +956,104 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         );
     }
 
-    /// `fill` looks at the amount before it computes the leak, so on a bucket
-    /// whose leak the float arithmetic cannot hold a zero and a negative
-    /// amount still get their own errors. Everything that computes the leak
-    /// there reverts with the arithmetic's.
-    function testTheAmountGuardsComeBeforeALeakTheArithmeticCannotHold() external {
+    /// `LibDecimalFloat.mul` across an external boundary, for `expectRevert`.
+    function externalMul(Float a, Float b) external pure returns (Float) {
+        return a.mul(b);
+    }
+
+    /// A leak no `Float` holds drains the bucket on every entry point, where
+    /// `LibDecimalFloat.mul` on the same operands reverts `ExponentOverflow`.
+    /// The level at the top of the `Float` range drains the same.
+    function testALeakNoFloatHoldsDrainsTheBucket() external {
         Float big = LibDecimalFloat.packLossless(1, type(int32).max);
-        bytes memory overflow =
-            abi.encodeWithSelector(ExponentOverflow.selector, int256(1), 2 * int256(type(int32).max));
+        vm.expectRevert(abi.encodeWithSelector(ExponentOverflow.selector, int256(1), 2 * int256(type(int32).max)));
+        this.externalMul(big, big);
+
+        Float[2] memory levels = [float(1), LibDecimalFloat.FLOAT_MAX_POSITIVE_VALUE];
+        for (uint256 i = 0; i < levels.length; i++) {
+            LeakyBucket memory stored = bucket(levels[i], float(0), float(7), big);
+
+            assertFloatEq(LibLeakyBucket.levelAt(stored, big), float(0));
+            assertFloatEq(LibLeakyBucket.headroomAt(stored, big), float(7));
+
+            (Float level, Float checkpoint) = LibLeakyBucket.settle(stored, big);
+            assertFloatEq(level, float(0));
+            assertFloatEq(checkpoint, big);
+
+            (level, checkpoint) = LibLeakyBucket.fill(stored, big, float(7));
+            assertFloatEq(level, float(7));
+            assertFloatEq(checkpoint, big);
+
+            LeakyBucket memory set = LibLeakyBucket.setPolicy(stored, big, float(3), float(2));
+            assertFloatEq(set.level, float(0));
+            assertFloatEq(set.timestamp, big);
+            assertFloatEq(set.capacity, float(3));
+            assertFloatEq(set.leakRate, float(2));
+        }
+    }
+
+    /// A leak `LibDecimalFloat.mul` refuses for its exponent, and which is
+    /// still under the level, is subtracted rather than draining the bucket.
+    function testALeakWithAnExponentOutOfRangeUnderTheLevelIsSubtracted() external {
+        Float leakRate = LibDecimalFloat.packLossless(1, type(int32).max);
+        Float timestamp = LibDecimalFloat.packLossless(1, 10);
+        vm.expectRevert(abi.encodeWithSelector(ExponentOverflow.selector, int256(1), int256(type(int32).max) + 10));
+        this.externalMul(timestamp, leakRate);
+
+        Float level = LibDecimalFloat.packLossless(1e60, type(int32).max);
+        assertFloatEq(
+            LibLeakyBucket.levelAt(bucket(level, float(0), level, leakRate), timestamp),
+            LibDecimalFloat.packLossless(1e60 - 1e10, type(int32).max)
+        );
+    }
+
+    /// No level, rate or pair of times at or above one unit makes a read
+    /// revert, and the level read is never above the stored one.
+    function testNoLeakIsTooLargeToRead(uint224[4] memory coefficients, uint32[4] memory exponents) external pure {
+        Float[4] memory floats;
+        for (uint256 i = 0; i < 4; i++) {
+            floats[i] = LibDecimalFloat.packLossless(
+                int256(bound(coefficients[i], 0, uint256(uint224(type(int224).max)))),
+                int256(bound(exponents[i], 0, uint256(uint32(type(int32).max))))
+            );
+        }
+        LeakyBucket memory stored = bucket(floats[0], floats[1], floats[0], floats[2]);
+        Float level = LibLeakyBucket.levelAt(stored, floats[3]);
+        assertFloatLe(level, floats[0]);
+        assertFloatGe(level, float(0));
+    }
+
+    /// `fill` looks at the amount before it does any arithmetic, so on a
+    /// bucket whose elapsed time the float arithmetic cannot hold a zero and a
+    /// negative amount still get their own errors.
+    function testTheAmountGuardsComeBeforeArithmeticThatReverts() external {
+        Float checkpoint = LibDecimalFloat.packLossless(1, type(int32).min);
+        Float timestamp = LibDecimalFloat.packLossless(2, type(int32).min);
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketZeroAmount.selector));
-        this.externalFill(float(1), float(0), big, float(1), big, float(0));
+        this.externalFill(float(1), checkpoint, timestamp, float(1), float(1), float(0));
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeAmount.selector, signedFloat(-1)));
-        this.externalFill(float(1), float(0), big, float(1), big, signedFloat(-1));
+        this.externalFill(float(1), checkpoint, timestamp, float(1), float(1), signedFloat(-1));
 
-        vm.expectRevert(overflow);
-        this.externalFill(float(1), float(0), big, float(1), big, float(1));
-        vm.expectRevert(overflow);
-        this.externalSettle(float(1), float(0), big, float(1), big);
-        vm.expectRevert(overflow);
-        this.externalLevelAt(float(1), float(0), big, float(1), big);
-        vm.expectRevert(overflow);
-        this.externalHeadroomAt(float(1), float(0), big, float(1), big);
-        vm.expectRevert(overflow);
-        this.externalSetPolicy(bucket(float(1), float(0), float(1), big), big, float(1), float(1));
+        vm.expectPartialRevert(ExponentUnderflow.selector);
+        this.externalFill(float(1), checkpoint, timestamp, float(1), float(1), float(1));
     }
 
-    /// The worked example of a rate rise. A bucket of 100 filled at second 0
-    /// and leaking 1 a second has earned 10 of headroom by second 10. Raising
-    /// the rate to 100 without settling re-rates those ten seconds and offers
-    /// the whole capacity at once; settled first, the ten seconds stay priced
-    /// at 1 and the new rate starts from second 10.
-    function testARateRiseIsRetroactiveUnlessSettled() external pure {
-        Float capacity = float(100);
+    /// The worked example of a pause, through `setPolicy`: 100 filled at
+    /// second 0 leaking 1 a second is paused at second 10 and resumed at
+    /// second 1000. The time spent at zero leaks nothing.
+    function testSetPolicyToAZeroRateIsAPause() external pure {
+        LeakyBucket memory stored = bucket(float(100), float(0), float(100), float(1));
+        LeakyBucket memory paused = LibLeakyBucket.setPolicy(stored, float(10), float(100), float(0));
+        assertFloatEq(LibLeakyBucket.headroomAt(paused, float(1000)), float(10));
 
-        assertFloatEq(headroomAt(float(100), float(0), float(10), capacity, float(1)), float(10));
+        LeakyBucket memory resumed = LibLeakyBucket.setPolicy(paused, float(1000), float(100), float(1));
+        assertFloatEq(LibLeakyBucket.headroomAt(resumed, float(1000)), float(10));
+        assertFloatEq(LibLeakyBucket.headroomAt(resumed, float(1005)), float(15));
 
-        // The rate written alone.
-        assertFloatEq(headroomAt(float(100), float(0), float(10), capacity, float(100)), float(100));
-
-        // Settled at the old rate, then the new rate.
-        (Float settled, Float settledAt) = settle(float(100), float(0), float(10), capacity, float(1));
-        assertFloatEq(settled, float(90));
-        assertFloatEq(settledAt, float(10));
-        assertFloatEq(headroomAt(settled, settledAt, float(10), capacity, float(2)), float(10));
-        assertFloatEq(headroomAt(settled, settledAt, float(15), capacity, float(2)), float(20));
-    }
-
-    /// A zero rate pauses the leak only between two settles. Without them the
-    /// paused time is leaked at the restored rate.
-    function testAZeroRateIsAPauseOnlyWhenSettled() external pure {
-        Float capacity = float(100);
-
-        // Never settled: a full bucket at second 0, read at second 1000 at the
-        // restored rate, has drained whatever the rate was in between.
-        assertFloatEq(headroomAt(float(100), float(0), float(1000), capacity, float(1)), float(100));
-
-        // Settled into the pause at second 10 and out of it at second 1000.
-        (Float paused, Float pausedAt) = settle(float(100), float(0), float(10), capacity, float(1));
-        (Float resumed, Float resumedAt) = settle(paused, pausedAt, float(1000), capacity, float(0));
-        assertFloatEq(resumed, float(90));
-        assertFloatEq(resumedAt, float(1000));
-        assertFloatEq(headroomAt(resumed, resumedAt, float(1000), capacity, float(1)), float(10));
-        assertFloatEq(headroomAt(resumed, resumedAt, float(1005), capacity, float(1)), float(15));
+        // The restored rate written into the paused bucket alone.
+        paused.leakRate = float(1);
+        assertFloatEq(LibLeakyBucket.headroomAt(paused, float(1000)), float(100));
     }
 
     /// A negative stored level leaks to zero given time, but before it does it
