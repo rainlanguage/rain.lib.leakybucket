@@ -40,7 +40,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         timestamp = bound(timestamp, 0, MAX_TIME);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         assertFloatLe(
-            levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity()), float(level)
+            levelAt(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(leakRate)), float(level)
         );
     }
 
@@ -50,7 +50,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         checkpoint = bound(checkpoint, 0, MAX_TIME);
         timestamp = bound(timestamp, 0, MAX_TIME);
         assertFloatEq(
-            levelAt(float(level), float(checkpoint), float(timestamp), float(0), probeCapacity()), float(level)
+            levelAt(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(0)), float(level)
         );
     }
 
@@ -60,7 +60,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         checkpoint = bound(checkpoint, 0, MAX_TIME);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         assertFloatEq(
-            levelAt(float(level), float(checkpoint), float(checkpoint), float(leakRate), probeCapacity()), float(level)
+            levelAt(float(level), float(checkpoint), float(checkpoint), probeCapacity(), float(leakRate)), float(level)
         );
     }
 
@@ -76,7 +76,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         uint256 leaked = elapsed * leakRate;
         assertFloatEq(
-            levelAt(float(level), float(0), float(elapsed), float(leakRate), probeCapacity()),
+            levelAt(float(level), float(0), float(elapsed), probeCapacity(), float(leakRate)),
             leaked < level ? float(level - leaked) : float(0)
         );
     }
@@ -93,7 +93,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         leakRate = bound(leakRate, 1, MAX_LEAK_RATE);
         // Long enough at this rate to have leaked past whatever the level was.
         uint256 elapsed = level / leakRate + 1 + bound(extra, 0, MAX_TIME);
-        assertFloatEq(levelAt(float(level), float(0), float(elapsed), float(leakRate), probeCapacity()), float(0));
+        assertFloatEq(levelAt(float(level), float(0), float(elapsed), probeCapacity(), float(leakRate)), float(0));
     }
 
     /// The closed form agrees with draining one unit of time at a time,
@@ -103,7 +103,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         elapsed = bound(elapsed, 0, 512);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         assertFloatEq(
-            levelAt(float(level), float(0), float(elapsed), float(leakRate), probeCapacity()),
+            levelAt(float(level), float(0), float(elapsed), probeCapacity(), float(leakRate)),
             LibLeakyBucketSlow.leakSlow(float(level), elapsed, float(leakRate))
         );
     }
@@ -118,7 +118,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         timestamp = bound(timestamp, 0, checkpoint);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         assertFloatEq(
-            levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity()), float(level)
+            levelAt(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(leakRate)), float(level)
         );
     }
 
@@ -136,8 +136,8 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         later = bound(later, earlier, MAX_TIME);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         assertFloatLe(
-            levelAt(float(level), float(checkpoint), float(later), float(leakRate), probeCapacity()),
-            levelAt(float(level), float(checkpoint), float(earlier), float(leakRate), probeCapacity())
+            levelAt(float(level), float(checkpoint), float(later), probeCapacity(), float(leakRate)),
+            levelAt(float(level), float(checkpoint), float(earlier), probeCapacity(), float(leakRate))
         );
     }
 
@@ -181,7 +181,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         capacity = bound(capacity, 0, MAX_LEVEL);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
 
-        Float levelNow = levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity());
+        Float levelNow = levelAt(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(leakRate));
         Float headroom = headroomAt(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate));
         if (headroom.isZero()) {
             vm.expectRevert(abi.encodeWithSelector(LeakyBucketZeroAmount.selector));
@@ -227,7 +227,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
                 float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(amount)
             ),
             float(capacity),
-            levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity()),
+            levelAt(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(leakRate)),
             float(amount)
         );
     }
@@ -258,7 +258,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
                 float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(amount)
             ),
             float(capacity),
-            levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity()),
+            levelAt(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(leakRate)),
             float(amount)
         );
     }
@@ -327,7 +327,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
 
         // 75 units of time at one per unit leaks 75, reaching the new capacity
         // exactly.
-        assertFloatEq(levelAt(level, checkpoint, float(1000 + 75), leakRate, probeCapacity()), float(25));
+        assertFloatEq(levelAt(level, checkpoint, float(1000 + 75), probeCapacity(), leakRate), float(25));
         assertFloatEq(headroomAt(level, checkpoint, float(1000 + 75), capacity, leakRate), float(0));
 
         // And from there it behaves as an ordinary bucket at the new capacity.
@@ -352,7 +352,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         // The worked leak rate divides the worked capacity exactly, so there is
         // no remainder left standing at that moment.
         Float drained = float(1_700_000_000 + workedDrain());
-        assertFloatEq(levelAt(level, checkpoint, drained, workedLeakRate(), probeCapacity()), float(0));
+        assertFloatEq(levelAt(level, checkpoint, drained, probeCapacity(), workedLeakRate()), float(0));
 
         // A second burst lands, so `2 * capacity` crossed in one drain window.
         Float next = float(1_700_000_000 + workedDrain() + 1);
@@ -408,7 +408,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
 
         assertFloatEq(
             newLevel,
-            levelAt(float(level), float(checkpoint), newTimestamp, float(leakRate), probeCapacity()).add(float(amount))
+            levelAt(float(level), float(checkpoint), newTimestamp, probeCapacity(), float(leakRate)).add(float(amount))
         );
     }
 
@@ -460,7 +460,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         assertFloatEq(untouched.timestamp, float(0));
 
         assertFloatEq(
-            levelAt(untouched.level, untouched.timestamp, float(0), workedLeakRate(), probeCapacity()), float(0)
+            levelAt(untouched.level, untouched.timestamp, float(0), probeCapacity(), workedLeakRate()), float(0)
         );
         assertFloatEq(
             headroomAt(untouched.level, untouched.timestamp, float(0), workedCapacity(), workedLeakRate()),
@@ -538,8 +538,8 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
             fill(float(level), float(checkpoint), float(behind), float(capacity), float(leakRate), float(1));
         // One unit filled at `behind` is one unit on the level at `checkpoint`.
         assertFloatEq(
-            levelAt(filled, filledAt, float(later), float(leakRate), probeCapacity()),
-            levelAt(float(level + 1), float(checkpoint), float(later), float(leakRate), probeCapacity())
+            levelAt(filled, filledAt, float(later), probeCapacity(), float(leakRate)),
+            levelAt(float(level + 1), float(checkpoint), float(later), probeCapacity(), float(leakRate))
         );
         assertFloatEq(
             headroomAt(filled, filledAt, float(later), float(capacity), float(leakRate)),
@@ -553,30 +553,30 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         uint256 capacity,
         uint256 leakRate,
         uint256 t0,
-        uint256 gapA,
-        uint256 gapB
+        uint256 t1,
+        uint256 t2
     ) external pure {
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         t0 = bound(t0, 0, MAX_TIME);
-        uint256 t1 = bound(gapA, 0, MAX_TIME - t0) + t0;
-        uint256 t2 = bound(gapB, 0, MAX_TIME - t1) + t1;
+        t1 = bound(t1, 0, MAX_TIME - t0) + t0;
+        t2 = bound(t2, 0, MAX_TIME - t1) + t1;
 
         capacity = bound(capacity, 1, MAX_LEVEL);
 
         // A hand-built checkpoint of the level at t1 plus one unit.
         Float direct = levelAt(
-            levelAt(float(capacity - 1), float(t0), float(t1), float(leakRate), probeCapacity()).add(float(1)),
+            levelAt(float(capacity - 1), float(t0), float(t1), probeCapacity(), float(leakRate)).add(float(1)),
             float(t1),
             float(t2),
-            float(leakRate),
-            probeCapacity()
+            probeCapacity(),
+            float(leakRate)
         );
 
         // The same through a fill of one unit at t1.
         (Float filled, Float filledAt) =
             fill(float(capacity - 1), float(t0), float(t1), float(capacity), float(leakRate), float(1));
 
-        assertFloatEq(direct, levelAt(filled, filledAt, float(t2), float(leakRate), probeCapacity()));
+        assertFloatEq(direct, levelAt(filled, filledAt, float(t2), probeCapacity(), float(leakRate)));
     }
 
     /// The other half of "a zeroed bucket is a valid initial state", asserted
@@ -692,7 +692,12 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         this.externalSettle(float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate));
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
-        this.externalCheckPolicy(capacityFloat, float(leakRate));
+        this.externalSetPolicy(
+            bucket(float(level), float(checkpoint), float(0), float(leakRate)),
+            float(timestamp),
+            capacityFloat,
+            float(leakRate)
+        );
     }
 
     /// A negative leak rate fills the bucket as time passes, which is the
@@ -732,15 +737,137 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         this.externalSettle(float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat);
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
-        this.externalCheckPolicy(float(capacity), leakRateFloat);
+        this.externalSetPolicy(
+            bucket(float(level), float(checkpoint), float(capacity), float(0)),
+            float(timestamp),
+            float(capacity),
+            leakRateFloat
+        );
     }
 
-    /// Zero and every positive policy pass `checkPolicy`.
-    function testCheckPolicyAcceptsANonNegativePolicy(uint256 capacity, uint256 leakRate) external pure {
+    // ---------------------------------------------------------------- //
+    //                             Set policy                            //
+    // ---------------------------------------------------------------- //
+
+    /// What `setPolicy` returns, against arithmetic done in words: the level
+    /// less the leak at the STORED rate, the later of the two times, and the
+    /// new capacity and rate, zero included. The bucket handed in is untouched.
+    function testSetPolicySettlesAtTheStoredRateAndCarriesTheNewPolicy(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        uint256[2] memory capacities,
+        uint256[2] memory leakRates
+    ) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        capacities[0] = bound(capacities[0], 0, MAX_LEVEL);
+        capacities[1] = bound(capacities[1], 0, MAX_LEVEL);
+        leakRates[0] = bound(leakRates[0], 0, MAX_LEAK_RATE);
+        leakRates[1] = bound(leakRates[1], 0, MAX_LEAK_RATE);
+
+        uint256 elapsed = timestamp > checkpoint ? timestamp - checkpoint : 0;
+        uint256 leaked = elapsed * leakRates[0];
+
+        LeakyBucket memory stored = bucket(float(level), float(checkpoint), float(capacities[0]), float(leakRates[0]));
+        LeakyBucket memory set =
+            LibLeakyBucket.setPolicy(stored, float(timestamp), float(capacities[1]), float(leakRates[1]));
+
+        assertFloatEq(set.level, float(leaked >= level ? 0 : level - leaked));
+        assertFloatEq(set.timestamp, float(timestamp > checkpoint ? timestamp : checkpoint));
+        assertFloatEq(set.capacity, float(capacities[1]));
+        assertFloatEq(set.leakRate, float(leakRates[1]));
+
+        assertFloatEq(stored.level, float(level));
+        assertFloatEq(stored.timestamp, float(checkpoint));
+        assertFloatEq(stored.capacity, float(capacities[0]));
+        assertFloatEq(stored.leakRate, float(leakRates[0]));
+    }
+
+    /// A stored negative leak rate is no rate to settle at. `setPolicy` credits
+    /// no leak, moves the checkpoint, and the bucket it returns answers.
+    function testSetPolicyOnAStoredNegativeLeakRateCreditsNoLeak(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        int256 storedCapacity,
+        int256 storedLeakRate,
+        uint256 capacity,
+        uint256 leakRate
+    ) external pure {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
         capacity = bound(capacity, 0, MAX_LEVEL);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
-        LibLeakyBucket.checkPolicy(float(capacity), float(leakRate));
-        LibLeakyBucket.checkPolicy(float(0), float(0));
+        Float storedLeakRateFloat = signedFloat(bound(storedLeakRate, -MAX_SIGNED, -1));
+        LeakyBucket memory stored = bucket(
+            float(level),
+            float(checkpoint),
+            signedFloat(bound(storedCapacity, -MAX_SIGNED, MAX_SIGNED)),
+            storedLeakRateFloat
+        );
+        uint256 later = timestamp > checkpoint ? timestamp : checkpoint;
+
+        LeakyBucket memory set = LibLeakyBucket.setPolicy(stored, float(timestamp), float(capacity), float(leakRate));
+        assertFloatEq(set.level, float(level));
+        assertFloatEq(set.timestamp, float(later));
+        assertFloatEq(set.capacity, float(capacity));
+        assertFloatEq(set.leakRate, float(leakRate));
+        assertFloatEq(LibLeakyBucket.levelAt(set, float(later)), float(level));
+
+        // The stored rate is still what the caller holds.
+        assertFloatEq(stored.leakRate, storedLeakRateFloat);
+    }
+
+    /// A stored negative capacity beside a rate that is not negative: the rate
+    /// is one to settle at, and the level does not depend on the capacity, so
+    /// `setPolicy` settles as it does on any bucket.
+    function testSetPolicyOnAStoredNegativeCapacitySettlesAtTheStoredRate(
+        uint256 level,
+        uint256 checkpoint,
+        uint256 timestamp,
+        int256 storedCapacity,
+        uint256 storedLeakRate,
+        uint256 capacity
+    ) external {
+        level = bound(level, 0, MAX_LEVEL);
+        checkpoint = bound(checkpoint, 0, MAX_TIME);
+        timestamp = bound(timestamp, 0, MAX_TIME);
+        storedLeakRate = bound(storedLeakRate, 0, MAX_LEAK_RATE);
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        Float storedCapacityFloat = signedFloat(bound(storedCapacity, -MAX_SIGNED, -1));
+        LeakyBucket memory stored = bucket(float(level), float(checkpoint), storedCapacityFloat, float(storedLeakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, storedCapacityFloat));
+        this.externalSettle(
+            float(level), float(checkpoint), float(timestamp), storedCapacityFloat, float(storedLeakRate)
+        );
+
+        uint256 elapsed = timestamp > checkpoint ? timestamp - checkpoint : 0;
+        uint256 leaked = elapsed * storedLeakRate;
+
+        LeakyBucket memory set = LibLeakyBucket.setPolicy(stored, float(timestamp), float(capacity), float(0));
+        assertFloatEq(set.level, float(leaked >= level ? 0 : level - leaked));
+        assertFloatEq(set.timestamp, float(timestamp > checkpoint ? timestamp : checkpoint));
+        assertFloatEq(set.capacity, float(capacity));
+        assertFloatEq(set.leakRate, float(0));
+    }
+
+    /// The worked example of a rate rise, through `setPolicy`: 100 filled at
+    /// second 0 leaking 1 a second has earned 10 by second 10. The rate goes
+    /// to 100 in that second and the headroom is still 10; a second later it
+    /// is the whole capacity.
+    function testSetPolicyDoesNotReRateTimeAlreadySpent() external pure {
+        LeakyBucket memory stored = bucket(float(100), float(0), float(100), float(1));
+        LeakyBucket memory set = LibLeakyBucket.setPolicy(stored, float(10), float(100), float(100));
+        assertFloatEq(LibLeakyBucket.headroomAt(set, float(10)), float(10));
+        assertFloatEq(LibLeakyBucket.headroomAt(set, float(11)), float(100));
+
+        // The same rate written into the stored bucket alone.
+        stored.leakRate = float(100);
+        assertFloatEq(LibLeakyBucket.headroomAt(stored, float(10)), float(100));
     }
 
     // ---------------------------------------------------------------- //
@@ -791,15 +918,16 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
 
         (Float settled, Float settledAt) = settle(float(level), float(t0), float(t1), probeCapacity(), float(leakRate));
         assertFloatEq(
-            levelAt(settled, settledAt, float(t2), float(leakRate), probeCapacity()),
-            levelAt(float(level), float(t0), float(t2), float(leakRate), probeCapacity())
+            levelAt(settled, settledAt, float(t2), probeCapacity(), float(leakRate)),
+            levelAt(float(level), float(t0), float(t2), probeCapacity(), float(leakRate))
         );
     }
 
-    /// A capacity written alone, with no settle. The level at any later time is
-    /// the level under the old capacity, and the headroom is the new capacity
-    /// less that level.
-    function testACapacityWriteAloneChangesNoLevel(
+    /// The level does not depend on the capacity, which is what lets
+    /// `setPolicy` settle under the new one. With the capacity field replaced
+    /// and nothing else, the level at any later time is the level under the
+    /// old capacity, and the headroom is the new capacity less that level.
+    function testTheLevelDoesNotDependOnTheCapacity(
         uint256 level,
         uint256 leakRate,
         uint256 t0,
@@ -828,14 +956,22 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         );
     }
 
-    /// `fill` settles before it looks at the amount, so a leak the float
-    /// arithmetic cannot hold is the same refusal at every entry point,
-    /// whatever the amount.
-    function testALeakTheArithmeticCannotHoldIsRefusedBeforeTheAmountGuards() external {
+    /// `fill` looks at the amount before it computes the leak, so on a bucket
+    /// whose leak the float arithmetic cannot hold a zero and a negative
+    /// amount still get their own errors. Everything that computes the leak
+    /// there reverts with the arithmetic's.
+    function testTheAmountGuardsComeBeforeALeakTheArithmeticCannotHold() external {
         Float big = LibDecimalFloat.packLossless(1, type(int32).max);
         bytes memory overflow =
             abi.encodeWithSelector(ExponentOverflow.selector, int256(1), 2 * int256(type(int32).max));
 
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketZeroAmount.selector));
+        this.externalFill(float(1), float(0), big, float(1), big, float(0));
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeAmount.selector, signedFloat(-1)));
+        this.externalFill(float(1), float(0), big, float(1), big, signedFloat(-1));
+
+        vm.expectRevert(overflow);
+        this.externalFill(float(1), float(0), big, float(1), big, float(1));
         vm.expectRevert(overflow);
         this.externalSettle(float(1), float(0), big, float(1), big);
         vm.expectRevert(overflow);
@@ -843,11 +979,7 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         vm.expectRevert(overflow);
         this.externalHeadroomAt(float(1), float(0), big, float(1), big);
         vm.expectRevert(overflow);
-        this.externalFill(float(1), float(0), big, float(1), big, float(1));
-        vm.expectRevert(overflow);
-        this.externalFill(float(1), float(0), big, float(1), big, float(0));
-        vm.expectRevert(overflow);
-        this.externalFill(float(1), float(0), big, float(1), big, signedFloat(-1));
+        this.externalSetPolicy(bucket(float(1), float(0), float(1), big), big, float(1), float(1));
     }
 
     /// The worked example of a rate rise. A bucket of 100 filled at second 0
@@ -913,6 +1045,17 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         this.externalLevelAt(levelFloat, float(checkpoint), float(timestamp), float(capacity), float(leakRate));
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLevel.selector, levelFloat));
+        this.externalSettle(levelFloat, float(checkpoint), float(timestamp), float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLevel.selector, levelFloat));
+        this.externalSetPolicy(
+            bucket(levelFloat, float(checkpoint), float(capacity), float(leakRate)),
+            float(timestamp),
+            float(capacity),
+            float(leakRate)
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLevel.selector, levelFloat));
         this.externalFill(
             levelFloat, float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(amount)
         );
@@ -949,6 +1092,17 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         this.externalLevelAt(float(level), checkpointFloat, float(timestamp), float(capacity), float(leakRate));
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, checkpointFloat));
+        this.externalSettle(float(level), checkpointFloat, float(timestamp), float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, checkpointFloat));
+        this.externalSetPolicy(
+            bucket(float(level), checkpointFloat, float(capacity), float(leakRate)),
+            float(timestamp),
+            float(capacity),
+            float(leakRate)
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, checkpointFloat));
         this.externalFill(
             float(level), checkpointFloat, float(timestamp), float(capacity), float(leakRate), float(amount)
         );
@@ -975,6 +1129,17 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, timestampFloat));
         this.externalLevelAt(float(level), float(checkpoint), timestampFloat, float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, timestampFloat));
+        this.externalSettle(float(level), float(checkpoint), timestampFloat, float(capacity), float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, timestampFloat));
+        this.externalSetPolicy(
+            bucket(float(level), float(checkpoint), float(capacity), float(leakRate)),
+            timestampFloat,
+            float(capacity),
+            float(leakRate)
+        );
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeTimestamp.selector, timestampFloat));
         this.externalFill(

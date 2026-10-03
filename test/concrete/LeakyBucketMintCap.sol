@@ -6,7 +6,7 @@ import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFl
 import {LibLeakyBucket, LeakyBucket} from "../../src/lib/LibLeakyBucket.sol";
 
 /// @title LeakyBucketMintCap
-/// @notice Test harness: one bucket per minter, a mint, and a governance setter.
+/// @notice Test harness: one bucket per minter, a mint, and governance setters.
 contract LeakyBucketMintCap {
     using LibDecimalFloat for Float;
 
@@ -17,24 +17,14 @@ contract LeakyBucketMintCap {
     Float public totalMinted;
 
     /// Where governance goes.
-    ///
-    /// Settled before the write, so the old rate is charged for the time it was
-    /// in force and the new one starts from now.
     function setPolicy(address minter, Float capacity, Float leakRate) external {
-        LibLeakyBucket.checkPolicy(capacity, leakRate);
-        LeakyBucket storage bucket = sBuckets[minter];
-        (Float newLevel, Float checkpoint) = LibLeakyBucket.settle(bucket, now_());
-        bucket.level = newLevel;
-        bucket.timestamp = checkpoint;
-        bucket.capacity = capacity;
-        bucket.leakRate = leakRate;
+        sBuckets[minter] = LibLeakyBucket.setPolicy(sBuckets[minter], now_(), capacity, leakRate);
     }
 
-    /// A capacity written alone, with no settle.
+    /// A capacity alone: `setPolicy` at the stored leak rate.
     function setCapacity(address minter, Float capacity) external {
-        LeakyBucket storage bucket = sBuckets[minter];
-        LibLeakyBucket.checkPolicy(capacity, bucket.leakRate);
-        bucket.capacity = capacity;
+        LeakyBucket memory bucket = sBuckets[minter];
+        sBuckets[minter] = LibLeakyBucket.setPolicy(bucket, now_(), capacity, bucket.leakRate);
     }
 
     /// The whole enforcement path: load the minter's bucket, hand it to `fill`,

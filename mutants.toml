@@ -119,28 +119,29 @@ file = "src/lib/LibLeakyBucket.sol"
 target = "checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"
 replacement = "checkpoint = LibDecimalFloat.min(timestamp, bucket.timestamp);"
 
-# --- each entry point reaches the domain check through `leakedLevel`, `fill` by
-# way of `settle`. Each mutant here has one entry point stop calling it and
-# repeat its steps without the check, which is the divergence the single path
-# exists to prevent. ---
+# --- each entry point reaches the domain check and the leak through `levelAt`,
+# `fill` by way of `settle`. Each mutant here has one entry point stop calling
+# it and repeat its steps without the check, which is the divergence the single
+# path exists to prevent. ---
 
 [[mutants]]
 name = "M16 headroomAt answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return headroomFrom(bucket.capacity, leakedLevel(bucket, timestamp));"
+target = "return headroomFrom(bucket.capacity, levelAt(bucket, timestamp));"
 replacement = "return headroomFrom(bucket.capacity, leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate));"
 
 [[mutants]]
-name = "M17 levelAt answers on a bucket fill would refuse"
+name = "M17 settle answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
-target = "return leakedLevel(bucket, timestamp);"
-replacement = "return leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);"
+target = "level = levelAt(bucket, timestamp);"
+replacement = "level = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);"
 
 [[mutants]]
-name = "M18 fill does not check the domain before filling"
+name = "M18 fill does not check the domain before it looks at the amount"
 file = "src/lib/LibLeakyBucket.sol"
-target = "(levelNow, checkpoint) = settle(bucket, timestamp);"
-replacement = "levelNow = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate); checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"
+target = """        checkFillableDomain(bucket, timestamp);
+        if (amount.isZero()) {"""
+replacement = """        if (amount.isZero()) {"""
 
 [[mutants]]
 name = "M19 an amount too small to be recorded is accepted and charges nothing"
@@ -172,7 +173,7 @@ replacement = "if (false) {"
 # --- the shared path, and settle on top of it ---
 
 [[mutants]]
-name = "M23 the shared path does not check the domain, so no entry point does"
+name = "M23 the shared path does not check the domain, so only fill does"
 file = "src/lib/LibLeakyBucket.sol"
 target = """        checkFillableDomain(bucket, timestamp);
         return leak("""
@@ -193,32 +194,33 @@ replacement = "checkpoint = timestamp;"
 [[mutants]]
 name = "M26 settle settles nothing, so a rate change re-rates the whole interval"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        level = leakedLevel(bucket, timestamp);
+target = """        level = levelAt(bucket, timestamp);
         checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);"""
 replacement = """        checkFillableDomain(bucket, timestamp);
         level = bucket.level;
         checkpoint = bucket.timestamp;"""
 
-# --- fill settles first, so an unanswerable bucket is refused the same way
-# whatever the amount ---
+# --- fill checks the bucket, then the amount, then settles ---
 
 [[mutants]]
-name = "M27 fill looks at the amount before it settles"
+name = "M27 fill settles before it looks at the amount"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        (levelNow, checkpoint) = settle(bucket, timestamp);
+target = """        if (amount.isZero()) {
+            revert LeakyBucketZeroAmount();
+        }
+        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeAmount(amount);
+        }
+        Float levelNow;
+        (levelNow, checkpoint) = settle(bucket, timestamp);"""
+replacement = """        Float levelNow;
+        (levelNow, checkpoint) = settle(bucket, timestamp);
         if (amount.isZero()) {
             revert LeakyBucketZeroAmount();
         }
         if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeAmount(amount);
         }"""
-replacement = """        if (amount.isZero()) {
-            revert LeakyBucketZeroAmount();
-        }
-        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
-            revert LeakyBucketNegativeAmount(amount);
-        }
-        (levelNow, checkpoint) = settle(bucket, timestamp);"""
 
 # --- the policy check, which the domain check is written in terms of ---
 
@@ -228,3 +230,43 @@ file = "src/lib/LibLeakyBucket.sol"
 target = """        checkPolicy(bucket.capacity, bucket.leakRate);
         if (bucket.level.lt("""
 replacement = """        if (bucket.level.lt("""
+
+# --- setPolicy ---
+
+[[mutants]]
+name = "M29 setPolicy does not check the policy it is given"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        checkPolicy(capacity, leakRate);
+        // The level"""
+replacement = """        // The level"""
+
+[[mutants]]
+name = "M30 setPolicy settles at a stored negative rate, so it refuses that bucket"
+file = "src/lib/LibLeakyBucket.sol"
+target = "leakRate: LibDecimalFloat.max(bucket.leakRate, LibDecimalFloat.FLOAT_ZERO)"
+replacement = "leakRate: bucket.leakRate"
+
+[[mutants]]
+name = "M31 setPolicy settles at the new rate, re-rating the whole interval"
+file = "src/lib/LibLeakyBucket.sol"
+target = "leakRate: LibDecimalFloat.max(bucket.leakRate, LibDecimalFloat.FLOAT_ZERO)"
+replacement = "leakRate: leakRate"
+
+[[mutants]]
+name = "M32 setPolicy checks the bucket and settles nothing"
+file = "src/lib/LibLeakyBucket.sol"
+target = "(settled.level, settled.timestamp) = settle(settled, timestamp);"
+replacement = "checkFillableDomain(settled, timestamp);"
+
+[[mutants]]
+name = "M33 setPolicy returns the rate it settled at instead of the new one"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        settled.leakRate = leakRate;
+        return settled;"""
+replacement = """        return settled;"""
+
+[[mutants]]
+name = "M34 setPolicy returns the stored capacity instead of the new one"
+file = "src/lib/LibLeakyBucket.sol"
+target = "capacity: capacity,"
+replacement = "capacity: bucket.capacity,"

@@ -136,12 +136,13 @@ It reverts, and the revert takes both stores with it, on:
 | `LeakyBucketNegativeTimestamp(timestamp)`              | the stored timestamp, or the one read or filled at, is negative                            |
 | `LeakyBucketAmountNotCredited(level, amount)`          | the amount fits the headroom but does not raise the level, so it would charge nothing      |
 
-The four negative-bucket errors are checked before the amount, and the reads
-refuse them as well, so a read refuses exactly where a fill would. The leak is
-computed before the amount is looked at too, so on a bucket whose leak
-`rain.math.float` cannot represent, a fill reverts with that library's error
-whatever the amount, a zero or a negative one included. Every parameter in the
-errors above is a `Float`, which the ABI names as `bytes32`.
+The four negative-bucket errors are checked before the amount, and `levelAt`,
+`headroomAt` and `settle` refuse them as well, so each refuses exactly where a
+fill would. The amount is looked at before the leak is computed, so a zero or a
+negative amount gets its named error on every bucket those four checks pass,
+including one whose leak `rain.math.float` cannot represent; there a positive
+amount reverts with that library's error. Every parameter in the errors above is
+a `Float`, which the ABI names as `bytes32`.
 
 ### Governance is yours
 
@@ -152,11 +153,11 @@ for every minter — the library is reached identically. It has no opinion about
 ordering, delay or authority, which is what lets it sit under any of them
 unchanged.
 
-**A `leakRate` change applies retroactively unless the bucket is settled
-first.** The leak is computed at read time as `elapsed * leakRate`, with the
-rate read at that moment. A bucket records its level and when it was recorded,
-not the rate that was in force, so writing a new `leakRate` alone re-rates the
-whole interval since the checkpoint, not only the time after the change:
+**Change a policy with `setPolicy`, never by writing a field.** The leak is
+computed at read time as `elapsed * leakRate`, with the rate read at that
+moment. A bucket records its level and when it was recorded, not the rate that
+was in force, so writing a new `leakRate` alone re-rates the whole interval
+since the checkpoint, not only the time after the change:
 
 - Raising the rate hands out headroom neither policy earned. With `capacity` 100
   and `leakRate` 1, a minter fills to 100 at second 0. At second 10 the headroom
@@ -170,33 +171,33 @@ The excess is bounded by the outstanding level, so it is never more than one
 `capacity` and the burst bound above holds either way. What is lost is the
 sustained rate.
 
-So settle before changing `leakRate`, in the same transaction: `settle` reads
-the level at the old rate and returns it with the later of the timestamp and the
-stored one; store both, then write the new rate.
-
-Call `checkPolicy` on a `capacity` and a `leakRate` before storing either, in
-every setter. It reverts on a negative one with the error `fill` would raise;
-zero passes.
+`setPolicy` takes the bucket, the timestamp and the new `capacity` and
+`leakRate`, and returns the whole bucket to store. It reverts on a negative
+`capacity` or `leakRate` with the error `fill` would raise, zero passing; it
+settles the level at the stored rate, so each rate is charged for the time it
+was in force; and the bucket it returns carries the new policy from the later of
+the timestamp and the stored one.
 
 ```solidity
-function setLeakRate(address minter, Float leakRate) external onlyGovernance {
-    LeakyBucket storage bucket = sBuckets[minter];
-    LibLeakyBucket.checkPolicy(bucket.capacity, leakRate);
+function setPolicy(address minter, Float capacity, Float leakRate) external onlyGovernance {
     Float timestamp = LibDecimalFloat.packLossless(int256(block.timestamp), 0);
-    (Float level, Float checkpoint) = LibLeakyBucket.settle(bucket, timestamp);
-    bucket.level = level;
-    bucket.timestamp = checkpoint;
-    bucket.leakRate = leakRate;
+    sBuckets[minter] = LibLeakyBucket.setPolicy(sBuckets[minter], timestamp, capacity, leakRate);
 }
 ```
 
-`settle` refuses the buckets `fill` refuses, so a setter that stores a negative
-`capacity` or `leakRate` reverts on every later call for that bucket.
+A negative `capacity` or `leakRate` that reached storage some other way makes
+every read, `settle` and `fill` revert for that bucket. `setPolicy` still takes
+it: the level does not depend on the capacity, and a stored negative `leakRate`
+is no rate to settle at, so no leak is credited for the time since the
+checkpoint and the checkpoint moves to the timestamp. A negative stored `level`
+or timestamp it refuses like every other entry point.
 
-A `capacity` change needs no settling, because the level does not depend on the
-capacity. `setCapacity` in `test/concrete/LeakyBucketMintCap.sol` is that write,
-with `checkPolicy` and no `settle`, and it is the capacity write the invariant
-handler makes. Two properties make it safe to land at an arbitrary moment:
+`settle` on its own is the plain checkpoint: the level at the stored rate and
+the later of the timestamp and the stored one, with nothing filled and no policy
+changed.
+
+A `capacity` change goes through `setPolicy` as well, with the `leakRate`
+unchanged. Two properties make it safe to land at an arbitrary moment:
 
 - **Lowering `capacity` below an outstanding level binds immediately.** Headroom
   reads zero, every fill is rejected, and the bucket leaks down under the new
@@ -229,9 +230,8 @@ could not have held at all — to the last unit and rejects the unit after it.
 What is refused instead is the sign, on both policy fields, because neither
 negative is a stricter bucket: a negative `capacity` admits no fill at all, and
 a negative `leakRate` fills the bucket as time passes, which is the opposite of
-a leak. Both reads and the fill refuse them by name, and `setPolicy` in
-`test/concrete/LeakyBucketMintCap.sol` refuses them with `checkPolicy` before
-storing.
+a leak. `levelAt`, `headroomAt`, `settle` and `fill` refuse them by name on a
+stored bucket, and `setPolicy` refuses them before they are stored.
 
 ### Reading without filling
 
@@ -368,13 +368,13 @@ the second it belongs to together, and the caller stores both.
 
 The library **reverts** rather than answering on the values that cannot mean
 anything — a negative `capacity`, `leakRate`, `level` or timestamp — and it
-refuses them at the parameter, by name, from both reads and the fill, before it
-looks at the amount. Wherever the leak can be computed it refuses a zero amount
-and a negative amount by name as well; where it cannot, the arithmetic's own
-error comes first, as "Usage" says. The negative amount is the case the old type
-carried for free: an amount was a `uint256` and could not be negative, where a
-`Float` can be, and a negative fill drains the bucket, so it mints under a cap
-it never reached.
+refuses them at the parameter, by name, from `levelAt`, `headroomAt`, `settle`
+and `fill`, before it looks at the amount; `setPolicy` refuses the same level
+and timestamps, and the policy it is asked to store. `fill` then refuses a zero
+amount and a negative amount by name, before it computes the leak. The negative
+amount is the case the old type carried for free: an amount was a `uint256` and
+could not be negative, where a `Float` can be, and a negative fill drains the
+bucket, so it mints under a cap it never reached.
 
 ### Precision
 
@@ -507,20 +507,23 @@ the ones fuzzed in `test/src/lib/`:
   observable at any later second.
 - Reading answers everywhere inside the fillable domain, and the values outside
   it — a negative capacity, leak rate, level or timestamp — are refused by name
-  at both reads and at the fill, as are a zero and a negative amount wherever
-  the leak can be computed. A leak the arithmetic cannot hold is that
-  arithmetic's refusal at every entry point, whatever the amount. Every error's
-  selector is pinned to its signature.
+  at `levelAt`, `headroomAt`, `settle` and `fill`. `fill` refuses a zero and a
+  negative amount by name on every bucket inside the domain, before the leak is
+  computed; a leak the arithmetic cannot hold is that arithmetic's refusal at
+  every entry point that computes it. Every error's selector is pinned to its
+  signature.
 - `headroomAt` and `fill` agree at every input either will answer, and refuse
   exactly the same buckets.
 - `levelAt` reports what is owed rather than what fits, which is the one thing
   `capacity - headroomAt` cannot do after a capacity cut.
 - `settle` returns the level `levelAt` reports and a checkpoint that never moves
-  backwards, and refuses the buckets `fill` refuses. A bucket settled before
-  every `leakRate` change leaks, over any history of rates, what each rate
-  leaked over the time it was in force, exactly inside the fuzz bounds and to
-  the precision of the level outside them; one that is not settled is re-rated
-  for the whole interval since its checkpoint.
+  backwards, and refuses the buckets `fill` refuses.
+- `setPolicy` refuses a negative policy before it is stored, and returns the
+  bucket settled at the stored rate and carrying the new policy. A bucket whose
+  policy only ever changes through it leaks, over any history of rates, what
+  each rate leaked over the time it was in force, exactly inside the fuzz bounds
+  and to the precision of the level outside them. On a stored negative
+  `leakRate` it credits no leak and moves the checkpoint.
 - A fill at an exponent far below the level's either lands or is refused, and
   never lands on the level word it started from, and a zero written at a
   non-zero exponent is still a zero amount.

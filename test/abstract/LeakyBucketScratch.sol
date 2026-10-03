@@ -6,7 +6,9 @@ import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFl
 import {LibLeakyBucket, LeakyBucket} from "../../src/lib/LibLeakyBucket.sol";
 
 /// @title LeakyBucketScratch
-/// @notice The library entry points taken as loose words.
+/// @notice The library entry points taken as loose words. Every helper takes
+/// the bucket as `level, checkpoint`, then the `timestamp`, then `capacity,
+/// leakRate`.
 abstract contract LeakyBucketScratch {
     using LibDecimalFloat for Float;
 
@@ -37,23 +39,7 @@ abstract contract LeakyBucketScratch {
     }
 
     /// `LibLeakyBucket.levelAt` over a bucket built from these words.
-    ///
-    /// This derived the level as `capacity - headroomAt` while the library had
-    /// no level read to call, which meant every assertion spelled `levelAt` was
-    /// in fact exercising `headroomAt`. The library exports `levelAt` now, so
-    /// this calls it: the tests that name the level read are the tests that
-    /// cover it. That the two reads agree on a bucket under its capacity is
-    /// pinned separately, in `LeakyBucketEmbedding`.
-    ///
-    /// `capacity` no longer has to be at or above the level and is here only to
-    /// build the bucket and pass the domain check.
-    /// @param level The stored level.
-    /// @param checkpoint When `level` was recorded.
-    /// @param timestamp The time to evaluate at.
-    /// @param leakRate The leak in units per unit of time.
-    /// @param capacity Any capacity the domain check accepts.
-    /// @return The level as at `timestamp`.
-    function levelAt(Float level, Float checkpoint, Float timestamp, Float leakRate, Float capacity)
+    function levelAt(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate)
         internal
         pure
         returns (Float)
@@ -79,9 +65,14 @@ abstract contract LeakyBucketScratch {
         return settle(level, checkpoint, timestamp, capacity, leakRate);
     }
 
-    /// `checkPolicy` across an external boundary, for `expectRevert`.
-    function externalCheckPolicy(Float capacity, Float leakRate) external pure {
-        LibLeakyBucket.checkPolicy(capacity, leakRate);
+    /// `LibLeakyBucket.setPolicy` across an external boundary, for
+    /// `expectRevert`.
+    function externalSetPolicy(LeakyBucket memory stored, Float timestamp, Float capacity, Float leakRate)
+        external
+        pure
+        returns (LeakyBucket memory)
+    {
+        return LibLeakyBucket.setPolicy(stored, timestamp, capacity, leakRate);
     }
 
     /// `fill` across an external boundary, for `expectRevert`.
@@ -102,15 +93,12 @@ abstract contract LeakyBucketScratch {
         return headroomAt(level, checkpoint, timestamp, capacity, leakRate);
     }
 
-    /// The library's own `levelAt` across an external boundary, for
-    /// `expectRevert`. Distinct from the derived `levelAt` above, which reads
-    /// through a headroom: this one is the export, and it carries its own domain
-    /// check.
+    /// `levelAt` across an external boundary, for `expectRevert`.
     function externalLevelAt(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate)
         external
         pure
         returns (Float)
     {
-        return LibLeakyBucket.levelAt(bucket(level, checkpoint, capacity, leakRate), timestamp);
+        return levelAt(level, checkpoint, timestamp, capacity, leakRate);
     }
 }

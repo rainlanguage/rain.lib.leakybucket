@@ -33,17 +33,18 @@ contract LeakyBucketInvariantTest is Test {
         cap.setPolicy(ALICE, asFloat(CAPACITY), asFloat(LEAK_RATE));
         handler = new LeakyBucketHandler(cap, ALICE, CAPACITY, LEAK_RATE);
 
-        // The five selectors are named rather than left to the default, which
+        // The selectors are named rather than left to the default, which
         // would be every external function on the target INCLUDING the ones
         // `Test` brings in by inheritance. Under `fail-on-revert = true` a
         // fuzzer call into one of those that reverted would fail the run for a
         // reason that has nothing to do with the bucket.
-        bytes4[] memory selectors = new bytes4[](5);
+        bytes4[] memory selectors = new bytes4[](6);
         selectors[0] = LeakyBucketHandler.mint.selector;
         selectors[1] = LeakyBucketHandler.wait.selector;
         selectors[2] = LeakyBucketHandler.setCapacity.selector;
         selectors[3] = LeakyBucketHandler.setLeakRate.selector;
         selectors[4] = LeakyBucketHandler.tick.selector;
+        selectors[5] = LeakyBucketHandler.stepBack.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
@@ -68,5 +69,11 @@ contract LeakyBucketInvariantTest is Test {
     function invariant_throughputIsBoundedByBurstPlusLeak() external view {
         assertTrue(asFloat(handler.minted()).eq(cap.totalMinted()));
         assertLe(handler.minted(), CAPACITY + handler.leaked());
+    }
+
+    /// Every run wrote behind the checkpoint at least once, so the invariants
+    /// above held across a backwards clock and not only a forward one.
+    function afterInvariant() external view {
+        assertGt(handler.writesBehindCheckpoint(), 0);
     }
 }

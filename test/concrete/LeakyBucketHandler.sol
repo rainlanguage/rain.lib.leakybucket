@@ -42,14 +42,18 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// The leak rate currently in force.
     uint256 public leakRate;
 
-    /// The most the bucket can have leaked so far: every wait, priced at the
-    /// rate in force while it passed.
+    /// The most the bucket can have leaked so far: at each write, the time
+    /// since the checkpoint priced at the rate in force over it.
     uint256 public leaked;
 
-    /// The level the bucket should hold now, kept in words: each mint added,
-    /// each wait leaked at the rate in force while it passed, floored at zero.
-    /// A rate change that re-rated time already spent parts the cap from this.
-    uint256 public expectedLevel;
+    /// The level the bucket should hold at `checkpoint`, kept in words, and
+    /// the latest second a write landed at. A write is a mint that lands or a
+    /// policy change; a clock behind `checkpoint` leaves it where it is.
+    uint256 internal levelAtCheckpoint;
+    uint256 internal checkpoint;
+
+    /// How many writes landed with the clock behind `checkpoint`.
+    uint256 public writesBehindCheckpoint;
 
     /// The capacity currently in force, mirrored so the invariant can read the
     /// policy without a second source of truth.
@@ -70,6 +74,32 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
         MINTER = minter;
         leakRate = initialLeakRate;
         capacity = initialCapacity;
+        checkpoint = block.timestamp;
+    }
+
+    /// The level the bucket should hold now: what it held at `checkpoint`,
+    /// less the time since at the rate in force, floored at zero. A rate change
+    /// that re-rated time already spent parts the cap from this.
+    function expectedLevel() public view returns (uint256) {
+        uint256 leak = elapsed() * leakRate;
+        return leak >= levelAtCheckpoint ? 0 : levelAtCheckpoint - leak;
+    }
+
+    function elapsed() internal view returns (uint256) {
+        // forge-lint: disable-next-line(block-timestamp)
+        return block.timestamp > checkpoint ? block.timestamp - checkpoint : 0;
+    }
+
+    /// The model's side of a write that adds `added` to the level.
+    function write(uint256 added) internal {
+        leaked += elapsed() * leakRate;
+        levelAtCheckpoint = expectedLevel() + added;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < checkpoint) {
+            writesBehindCheckpoint++;
+        } else {
+            checkpoint = block.timestamp;
+        }
     }
 
     /// A mint of an arbitrary size, at whatever point in the history the fuzzer
@@ -86,7 +116,7 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
             // level by exactly what was minted.
             assertTrue(amountFloat.lte(headroomBefore));
             minted += amount;
-            expectedLevel += amount;
+            write(amount);
             assertTrue(CAP.level(MINTER).eq(levelBefore.add(amountFloat)));
         } catch (bytes memory reason) {
             // It was refused, so it must not have fitted, it must have been
@@ -116,19 +146,18 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// Time passing between calls, which is the only thing that refills the
     /// bucket.
     function wait(uint32 gap) external {
-        pass(gap);
+        vm.warp(block.timestamp + gap);
     }
 
     /// A wait short enough to leave part of a level standing.
     function tick(uint256 gap) external {
-        pass(bound(gap, 0, TICK_CEILING));
+        vm.warp(block.timestamp + bound(gap, 0, TICK_CEILING));
     }
 
-    function pass(uint256 gap) internal {
-        uint256 leak = gap * leakRate;
-        leaked += leak;
-        expectedLevel = leak >= expectedLevel ? 0 : expectedLevel - leak;
-        vm.warp(block.timestamp + gap);
+    /// The clock stepping to before the latest write, by no more than a `tick`
+    /// can make up, so the calls that follow land behind the checkpoint.
+    function stepBack(uint256 gap) external {
+        vm.warp(checkpoint - bound(gap, 1, TICK_CEILING));
     }
 
     /// Governance moving the burst around underneath an in-flight history,
@@ -137,12 +166,14 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     function setCapacity(uint256 newCapacity) external {
         capacity = bound(newCapacity, 0, capacity);
         CAP.setCapacity(MINTER, float(capacity));
+        write(0);
     }
 
     /// Governance moving the sustained rate in either direction, zero
     /// included, underneath an in-flight history.
     function setLeakRate(uint256 newLeakRate) external {
+        CAP.setPolicy(MINTER, float(capacity), float(bound(newLeakRate, 0, LEAK_RATE_CEILING)));
+        write(0);
         leakRate = bound(newLeakRate, 0, LEAK_RATE_CEILING);
-        CAP.setPolicy(MINTER, float(capacity), float(leakRate));
     }
 }

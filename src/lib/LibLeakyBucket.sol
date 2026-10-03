@@ -36,8 +36,8 @@ error LeakyBucketAmountNotCredited(Float level, Float amount);
 /// @param timestamp When `level` was recorded.
 /// @param capacity Burst.
 /// @param leakRate Units leaked per unit of time. Applied at read time to the
-/// whole interval since `timestamp`, so a new rate re-rates time that passed
-/// under the old one unless the bucket is settled first; see `settle`.
+/// whole interval since `timestamp`, so a rate written alone re-rates time that
+/// passed under the old one; see `setPolicy`.
 struct LeakyBucket {
     Float level;
     Float timestamp;
@@ -75,11 +75,8 @@ library LibLeakyBucket {
         return saturatingSub(capacity, levelNow);
     }
 
-    /// Reverts on a negative `capacity` or `leakRate`. Call it on a policy
-    /// before storing it: `settle` reverts on a stored policy this refuses.
-    /// @param capacity The capacity to be stored.
-    /// @param leakRate The leak rate to be stored.
-    function checkPolicy(Float capacity, Float leakRate) internal pure {
+    /// Reverts on a negative `capacity` or `leakRate`.
+    function checkPolicy(Float capacity, Float leakRate) private pure {
         if (capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeCapacity(capacity);
         }
@@ -107,13 +104,22 @@ library LibLeakyBucket {
         }
     }
 
-    /// The level at `timestamp`: the stored level leaked forward at the rate in
-    /// force, a backwards clock leaking nothing.
+    /// The outstanding level at `timestamp`: the stored level leaked forward at
+    /// the stored rate, a backwards clock leaking nothing.
     ///
-    /// The only place the domain is checked and the level is leaked. `settle`,
-    /// `levelAt`, `headroomAt` and `fill` each reach both through it, so a read
-    /// refuses exactly where a fill does and answers from the same level.
-    function leakedLevel(LeakyBucket memory bucket, Float timestamp) private pure returns (Float) {
+    /// The only place the level is leaked. `headroomAt`, `settle`, `setPolicy`
+    /// and `fill` each reach the leak through it, so each refuses the buckets
+    /// it refuses and answers from the same level.
+    ///
+    /// Exported because it cannot be derived from `headroomAt`. `capacity -
+    /// headroom` agrees with the level only while the level is at or under the
+    /// capacity; the headroom saturates at zero, so once a capacity is lowered
+    /// under an outstanding level that subtraction returns the capacity and
+    /// silently under-reports what is owed.
+    /// @param bucket The bucket. Not modified.
+    /// @param timestamp When to read at.
+    /// @return The level at `timestamp`.
+    function levelAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
         checkFillableDomain(bucket, timestamp);
         return leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);
     }
@@ -122,42 +128,56 @@ library LibLeakyBucket {
     /// `levelAt` reports, and the later of `timestamp` and the stored
     /// timestamp, so a backwards clock never re-credits leak on the next fill.
     ///
-    /// For a `leakRate` change. A bucket records its level and when, not the
-    /// rate that was in force, so the leak over the whole interval since the
-    /// checkpoint is priced at whatever rate is read. Writing a new rate alone
-    /// re-rates that interval: raising it hands out headroom neither policy
-    /// earned, and a zero rate is not a pause, because the time spent at zero
-    /// is leaked at the restored rate. `checkPolicy` the new rate, store both
-    /// returns and then write the new rate, in one transaction, and each rate
-    /// is charged for the time it was in force.
-    ///
     /// To the precision of the level, not exactly. A `Float` subtraction keeps
     /// about 67 digits and its rounding is not directed: a leak below the
     /// level's last digit takes a whole digit off it or, further below, takes
     /// nothing, and the checkpoint advances over that time either way. At that
     /// scale a settle changes what a later read returns, in either direction.
-    /// @param bucket The bucket, still carrying the old rate. Not modified.
+    /// @param bucket The bucket. Not modified.
     /// @param timestamp When to settle at.
     /// @return level The settled level, to store as `bucket.level`.
     /// @return checkpoint The new timestamp, to store as `bucket.timestamp`.
     function settle(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float level, Float checkpoint) {
-        level = leakedLevel(bucket, timestamp);
+        level = levelAt(bucket, timestamp);
         checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);
     }
 
-    /// The outstanding level at `timestamp`: the level `settle` returns.
+    /// `bucket` under a new policy from `timestamp`: settled at the stored
+    /// rate, then carrying `capacity` and `leakRate`. The way to change either.
     ///
-    /// Exported because it cannot be derived from `headroomAt`. `capacity -
-    /// headroom` agrees with the level only while the level is at or under the
-    /// capacity; the headroom saturates at zero, so once a capacity is lowered
-    /// under an outstanding level that subtraction returns the capacity and
-    /// silently under-reports what is owed. A caller that wants the level has to
-    /// be given it.
-    /// @param bucket The bucket. Not modified.
-    /// @param timestamp When to read at.
-    /// @return The level at `timestamp`.
-    function levelAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
-        return leakedLevel(bucket, timestamp);
+    /// A bucket records its level and when, not the rate that was in force, so
+    /// the leak over the whole interval since the checkpoint is priced at
+    /// whatever rate is read. A new rate written alone re-rates that interval:
+    /// raising it hands out headroom neither policy earned, and a zero rate is
+    /// not a pause, because the time spent at zero is leaked at the restored
+    /// rate. Settled first, each rate is charged for the time it was in force.
+    ///
+    /// Reverts on a negative `capacity` or `leakRate`, so neither is stored. A
+    /// stored leak rate that is already negative is no rate to settle at: no
+    /// leak is credited and the checkpoint still moves, so such a bucket takes
+    /// a policy rather than refusing every call for good.
+    /// @param bucket The bucket under its stored policy. Not modified.
+    /// @param timestamp When the new policy starts.
+    /// @param capacity The new capacity.
+    /// @param leakRate The new leak rate.
+    /// @return The bucket to store, all four fields.
+    function setPolicy(LeakyBucket memory bucket, Float timestamp, Float capacity, Float leakRate)
+        internal
+        pure
+        returns (LeakyBucket memory)
+    {
+        checkPolicy(capacity, leakRate);
+        // The level does not depend on the capacity, so the new capacity
+        // stands in for a stored one the domain check would refuse.
+        LeakyBucket memory settled = LeakyBucket({
+            level: bucket.level,
+            timestamp: bucket.timestamp,
+            capacity: capacity,
+            leakRate: LibDecimalFloat.max(bucket.leakRate, LibDecimalFloat.FLOAT_ZERO)
+        });
+        (settled.level, settled.timestamp) = settle(settled, timestamp);
+        settled.leakRate = leakRate;
+        return settled;
     }
 
     /// The most `fill` would accept at `timestamp`: a positive headroom fits
@@ -168,12 +188,12 @@ library LibLeakyBucket {
     /// @param timestamp When to read at.
     /// @return Headroom at `timestamp`.
     function headroomAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
-        return headroomFrom(bucket.capacity, leakedLevel(bucket, timestamp));
+        return headroomFrom(bucket.capacity, levelAt(bucket, timestamp));
     }
 
-    /// Fill `amount` at `timestamp`: `settle`, then `amount` on top of the
-    /// settled level. The amount is looked at after the settle, so whatever
-    /// `settle` reverts with, `fill` reverts with for every amount.
+    /// Fill `amount` at `timestamp`: `amount` on top of the settled level. The
+    /// bucket is checked, then the amount, then the leak is computed, so a zero
+    /// or a negative amount reverts by name on every bucket the check passes.
     /// @param bucket The bucket. Not modified.
     /// @param timestamp When to fill at.
     /// @param amount The amount to fill.
@@ -184,14 +204,15 @@ library LibLeakyBucket {
         pure
         returns (Float level, Float checkpoint)
     {
-        Float levelNow;
-        (levelNow, checkpoint) = settle(bucket, timestamp);
+        checkFillableDomain(bucket, timestamp);
         if (amount.isZero()) {
             revert LeakyBucketZeroAmount();
         }
         if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeAmount(amount);
         }
+        Float levelNow;
+        (levelNow, checkpoint) = settle(bucket, timestamp);
         if (amount.gt(headroomFrom(bucket.capacity, levelNow))) {
             revert LeakyBucketCapacityExceeded(bucket.capacity, levelNow, amount);
         }

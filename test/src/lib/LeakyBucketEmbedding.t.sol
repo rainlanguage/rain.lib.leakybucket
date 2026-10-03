@@ -184,10 +184,10 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         assertFloatEq(sCap.headroom(ALICE), capacityOver(20));
     }
 
-    /// A capacity written alone, with no settle, binds at once and leaves the
-    /// level and its checkpoint as they were. BOB takes the same history
-    /// through the setter that settles, and reads the same at every step.
-    function testACapacityWriteAloneNeedsNoSettle() external {
+    /// `setCapacity` binds at once and keeps the stored rate. BOB takes the
+    /// same history through `setPolicy` with the rate restated, and reads the
+    /// same at every step.
+    function testSetCapacityKeepsTheStoredRate() external {
         vm.prank(ALICE);
         sCap.mint(workedCapacity());
         vm.prank(BOB);
@@ -204,7 +204,7 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         assertFloatEq(sCap.headroom(BOB), sCap.headroom(ALICE));
 
         // The time before the write and the time after it are leaked once
-        // each, from a checkpoint the write did not move.
+        // each.
         vm.warp(block.timestamp + workedDrain() / 2 - workedDrain() / 20);
         assertFloatEq(sCap.level(ALICE), capacityOver(20));
         assertFloatEq(sCap.headroom(ALICE), capacityOver(20));
@@ -220,8 +220,8 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         assertFloatEq(sCap.headroom(ALICE), float(0));
     }
 
-    /// The unsettled capacity write refuses a negative capacity as the settled
-    /// setter does, and stores nothing.
+    /// `setCapacity` refuses a negative capacity as `setPolicy` does, and stores
+    /// nothing.
     function testSetCapacityRefusesANegativeCapacity(int256 capacity) external {
         Float capacityFloat = signedFloat(bound(capacity, -MAX_SIGNED, -1));
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
@@ -403,6 +403,25 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
 
         assertFloatEq(minted, sCap.totalMinted());
         assertTrue(minted.lte(workedCapacity().add(float(block.timestamp - start).mul(workedLeakRate()))));
+    }
+
+    /// A policy set at a clock behind the checkpoint stores the whole bucket:
+    /// the level as it was, the checkpoint where it was, and the new policy.
+    function testSetPolicyBehindTheCheckpointKeepsTheCheckpoint() external {
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+        uint256 filled = block.timestamp;
+
+        vm.warp(filled - workedDrain());
+        sCap.setPolicy(ALICE, workedCapacity().mul(float(2)), workedLeakRate().mul(float(2)));
+        assertFloatEq(sCap.level(ALICE), workedCapacity());
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
+
+        vm.warp(filled);
+        assertFloatEq(sCap.level(ALICE), workedCapacity());
+
+        vm.warp(filled + workedDrain() / 4);
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
     }
 
     /// A clock that steps backwards banks no credit, through real storage.

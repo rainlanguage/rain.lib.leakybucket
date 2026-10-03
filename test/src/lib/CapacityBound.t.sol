@@ -57,7 +57,7 @@ contract CapacityBoundTest is LeakyBucketAsserts {
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
         amount = bound(amount, capacity + 1, MAX_LEVEL + 1);
 
-        Float levelNow = levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity());
+        Float levelNow = levelAt(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(leakRate));
         assertCapacityExceeded(
             fillRefused(
                 float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate), float(amount)
@@ -85,7 +85,7 @@ contract CapacityBoundTest is LeakyBucketAsserts {
         capacity = bound(capacity, 0, MAX_LEVEL);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
 
-        Float levelNow = levelAt(float(level), float(checkpoint), float(timestamp), float(leakRate), probeCapacity());
+        Float levelNow = levelAt(float(level), float(checkpoint), float(timestamp), probeCapacity(), float(leakRate));
         Float headroom = headroomAt(float(level), float(checkpoint), float(timestamp), float(capacity), float(leakRate));
         // Every level here is a whole number, so the headroom is one too and
         // converts back to a word the fuzzer can be bounded against.
@@ -109,7 +109,7 @@ contract CapacityBoundTest is LeakyBucketAsserts {
 
         // Half a drain time later, half the capacity has leaked out.
         Float half = float(workedDrain() / 2);
-        assertFloatEq(levelAt(filled, checkpoint, half, workedLeakRate(), workedCapacity()), capacityOver(2));
+        assertFloatEq(levelAt(filled, checkpoint, half, workedCapacity(), workedLeakRate()), capacityOver(2));
         assertFloatEq(headroomAt(filled, checkpoint, half, workedCapacity(), workedLeakRate()), capacityOver(2));
 
         // So 1.5 capacities crossed in half a drain time, and the bucket is
@@ -151,8 +151,8 @@ contract CapacityBoundTest is LeakyBucketAsserts {
         later = bound(later, earlier, MAX_TIME);
         leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
 
-        Float levelEarlier = levelAt(float(level), float(checkpoint), float(earlier), float(leakRate), probeCapacity());
-        Float levelLater = levelAt(float(level), float(checkpoint), float(later), float(leakRate), probeCapacity());
+        Float levelEarlier = levelAt(float(level), float(checkpoint), float(earlier), probeCapacity(), float(leakRate));
+        Float levelLater = levelAt(float(level), float(checkpoint), float(later), probeCapacity(), float(leakRate));
         // Monotonic in time, so this cannot go negative.
         assertTrue(levelEarlier.sub(levelLater).lte(float(capacity)));
 
