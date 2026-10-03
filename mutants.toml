@@ -6,9 +6,8 @@
 
 [suite]
 root = "."
-command = ["sh", ".mutation-test/suite.sh"]
-# forge's own tally. `--force` in the wrapper means the mutated source is always
-# recompiled, so a verdict is never scored against a stale artifact.
+command = ["sh", ".mutation-test/check.sh"]
+# forge's own tally.
 proof = '(\d+) tests passed, (\d+) failed'
 fail-pattern = '\[FAIL[^\]]*\] (\S+)'
 timeout-secs = 1800
@@ -146,3 +145,30 @@ name = "M19 an amount too small to be recorded is accepted and charges nothing"
 file = "src/lib/LibLeakyBucket.sol"
 target = "if (!filled.gt(levelNow)) {"
 replacement = "if (false) {"
+
+# --- settle ---
+
+[[mutants]]
+name = "M20 settle answers on a bucket fill would refuse"
+file = "src/lib/LibLeakyBucket.sol"
+target = """        checkFillableDomain(bucket.capacity, bucket.leakRate);
+        level = levelAt("""
+replacement = """        level = levelAt("""
+
+[[mutants]]
+name = "M21 settle returns the stored level without leaking it"
+file = "src/lib/LibLeakyBucket.sol"
+target = "level = levelAt(bucket.level, bucket.timestamp, timestamp, bucket.leakRate);"
+replacement = "level = bucket.level;"
+
+[[mutants]]
+name = "M22 settle takes the earlier time, so the settled interval leaks twice"
+file = "src/lib/LibLeakyBucket.sol"
+target = "checkpoint = LibDecimalFloat.max(bucket.timestamp, timestamp);"
+replacement = "checkpoint = LibDecimalFloat.min(bucket.timestamp, timestamp);"
+
+[[mutants]]
+name = "M23 settle at a backwards clock moves the checkpoint back"
+file = "src/lib/LibLeakyBucket.sol"
+target = "checkpoint = LibDecimalFloat.max(bucket.timestamp, timestamp);"
+replacement = "checkpoint = timestamp;"

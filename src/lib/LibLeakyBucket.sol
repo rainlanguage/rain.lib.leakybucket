@@ -28,7 +28,9 @@ error LeakyBucketAmountNotCredited(Float level, Float amount);
 /// @param level The level at `timestamp`.
 /// @param timestamp When `level` was recorded.
 /// @param capacity Burst.
-/// @param leakRate Units leaked per unit of time.
+/// @param leakRate Units leaked per unit of time. Applied at read time to the
+/// whole interval since `timestamp`, so a new rate re-rates time that passed
+/// under the old one unless the bucket is settled first; see `settle`.
 struct LeakyBucket {
     Float level;
     Float timestamp;
@@ -165,5 +167,27 @@ library LibLeakyBucket {
         checkFillableDomain(bucket.capacity, bucket.leakRate);
         level = fillAt(bucket.level, bucket.timestamp, timestamp, bucket.capacity, bucket.leakRate, amount);
         checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);
+    }
+
+    /// The bucket checkpointed at `timestamp` with nothing filled: the level
+    /// leaked forward at the rate in force, and the later of `timestamp` and
+    /// the stored timestamp.
+    ///
+    /// For a `leakRate` change. A bucket records its level and when, not the
+    /// rate that was in force, so the leak over the whole interval since the
+    /// checkpoint is priced at whatever rate is read. Writing a new rate alone
+    /// re-rates that interval: raising it hands out headroom neither policy
+    /// earned, and a zero rate is not a pause, because the time spent at zero
+    /// is leaked at the restored rate. Store both returns and then write the
+    /// new rate, in one transaction, and each rate is charged for exactly the
+    /// time it was in force.
+    /// @param bucket The bucket, still carrying the old rate. Not modified.
+    /// @param timestamp When to settle at.
+    /// @return level The settled level, to store as `bucket.level`.
+    /// @return checkpoint The new timestamp, to store as `bucket.timestamp`.
+    function settle(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float level, Float checkpoint) {
+        checkFillableDomain(bucket.capacity, bucket.leakRate);
+        level = levelAt(bucket.level, bucket.timestamp, timestamp, bucket.leakRate);
+        checkpoint = LibDecimalFloat.max(bucket.timestamp, timestamp);
     }
 }

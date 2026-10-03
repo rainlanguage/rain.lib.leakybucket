@@ -33,15 +33,16 @@ contract LeakyBucketInvariantTest is Test {
         cap.setPolicy(ALICE, asFloat(CAPACITY), asFloat(LEAK_RATE));
         handler = new LeakyBucketHandler(cap, ALICE, CAPACITY, LEAK_RATE);
 
-        // The three selectors are named rather than left to the default, which
+        // The four selectors are named rather than left to the default, which
         // would be every external function on the target INCLUDING the ones
         // `Test` brings in by inheritance. Under `fail-on-revert = true` a
         // fuzzer call into one of those that reverted would fail the run for a
         // reason that has nothing to do with the bucket.
-        bytes4[] memory selectors = new bytes4[](3);
+        bytes4[] memory selectors = new bytes4[](4);
         selectors[0] = LeakyBucketHandler.mint.selector;
         selectors[1] = LeakyBucketHandler.wait.selector;
         selectors[2] = LeakyBucketHandler.setCapacity.selector;
+        selectors[3] = LeakyBucketHandler.setLeakRate.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
@@ -53,10 +54,11 @@ contract LeakyBucketInvariantTest is Test {
         assertTrue(cap.headroom(ALICE).lte(asFloat(CAPACITY)));
     }
 
-    /// Cumulative throughput is bounded by one burst plus the sustained rate
-    /// over the elapsed window, however the calls are interleaved.
+    /// Cumulative throughput is bounded by one burst plus what each rate leaked
+    /// over the time it was in force, however the calls are interleaved and
+    /// however the rate moves.
     function invariant_throughputIsBoundedByBurstPlusLeak() external view {
         assertTrue(asFloat(handler.minted()).eq(cap.totalMinted()));
-        assertTrue(asFloat(handler.minted()).lte(asFloat(CAPACITY + (block.timestamp - handler.START()) * LEAK_RATE)));
+        assertLe(handler.minted(), CAPACITY + handler.leaked());
     }
 }

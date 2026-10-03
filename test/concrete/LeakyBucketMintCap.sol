@@ -22,8 +22,14 @@ contract LeakyBucketMintCap {
     /// `LEAKY_BUCKET_LEVEL_MAX` because a larger one could not be packed; a
     /// `Float` capacity has no such ceiling, and `fill` rejects the capacities
     /// that are actually meaningless (the negative ones) itself.
+    ///
+    /// Settled before the write, so the old rate is charged for the time it was
+    /// in force and the new one starts from now.
     function setPolicy(address minter, Float capacity, Float leakRate) external {
         LeakyBucket storage bucket = sBuckets[minter];
+        (Float level_, Float checkpoint) = LibLeakyBucket.settle(bucket, now_());
+        bucket.level = level_;
+        bucket.timestamp = checkpoint;
         bucket.capacity = capacity;
         bucket.leakRate = leakRate;
     }

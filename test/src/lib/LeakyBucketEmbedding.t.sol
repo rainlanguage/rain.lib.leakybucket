@@ -82,7 +82,6 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         // leak each second: every mint fits, and the bucket stays full.
         LeakyBucketMintCap other = new LeakyBucketMintCap();
         other.setPolicy(BOB, workedCapacity(), workedLeakRate());
-        vm.warp(1_700_000_000);
         vm.prank(BOB);
         other.mint(workedCapacity());
         for (uint256 i = 0; i < workedDrain() / 2; i++) {

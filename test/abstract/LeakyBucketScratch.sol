@@ -61,6 +61,24 @@ abstract contract LeakyBucketScratch {
         return LibLeakyBucket.levelAt(bucket(level, checkpoint, capacity, leakRate), timestamp);
     }
 
+    /// `LibLeakyBucket.settle` over a bucket built from these words.
+    function settle(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate)
+        internal
+        pure
+        returns (Float, Float)
+    {
+        return LibLeakyBucket.settle(bucket(level, checkpoint, capacity, leakRate), timestamp);
+    }
+
+    /// `settle` across an external boundary, for `expectRevert`.
+    function externalSettle(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate)
+        external
+        pure
+        returns (Float, Float)
+    {
+        return settle(level, checkpoint, timestamp, capacity, leakRate);
+    }
+
     /// `fill` across an external boundary, for `expectRevert`.
     function externalFill(Float level, Float checkpoint, Float timestamp, Float capacity, Float leakRate, Float amount)
         external

@@ -145,10 +145,47 @@ never library state. Whatever writes them — a constructor, a timelocked setter
 a staged upgrade, a governor, or a per minter mapping holding a different pair
 for every minter — the library is reached identically. It has no opinion about
 ordering, delay or authority, which is what lets it sit under any of them
-unchanged. Write the two policy fields and leave the level and its timestamp
-alone: the policy changed, the bucket's history did not.
+unchanged.
 
-Two properties make policy changes safe to land at an arbitrary moment:
+**A `leakRate` change applies retroactively unless the bucket is settled
+first.** The leak is computed at read time as `elapsed * leakRate`, with the
+rate read at that moment. A bucket records its level and when it was recorded,
+not the rate that was in force, so writing a new `leakRate` alone re-rates the
+whole interval since the checkpoint, not only the time after the change:
+
+- Raising the rate hands out headroom neither policy earned. With `capacity` 100
+  and `leakRate` 1, a minter fills to 100 at second 0. At second 10 the headroom
+  is 10. Raise `leakRate` to 100 and in that same second the headroom reads 100,
+  so the minter takes 200 in 10 seconds where the two policies allowed 110.
+- `leakRate = 0` is not a pause. Elapsed time keeps accumulating while the rate
+  is zero, and restoring the rate leaks all of it at once.
+- Lowering the rate takes back leak the old rate had already paid.
+
+The excess is bounded by the outstanding level, so it is never more than one
+`capacity` and the burst bound above holds either way. What is lost is the
+sustained rate.
+
+So settle before changing `leakRate`, in the same transaction: `settle` reads
+the level at the old rate and returns it with the later of the timestamp and the
+stored one; store both, then write the new rate.
+
+```solidity
+function setLeakRate(address minter, Float leakRate) external onlyGovernance {
+    LeakyBucket storage bucket = sBuckets[minter];
+    Float timestamp = LibDecimalFloat.packLossless(int256(block.timestamp), 0);
+    (Float level, Float checkpoint) = LibLeakyBucket.settle(bucket, timestamp);
+    bucket.level = level;
+    bucket.timestamp = checkpoint;
+    bucket.leakRate = leakRate;
+}
+```
+
+`settle` refuses the buckets `fill` refuses, so a bucket already holding a
+negative `capacity` or `leakRate` cannot be settled; it could not be filled or
+read either, and has no history at that policy to preserve.
+
+A `capacity` change needs no settling, because the level does not depend on the
+capacity. Two properties make it safe to land at an arbitrary moment:
 
 - **Lowering `capacity` below an outstanding level binds immediately.** Headroom
   reads zero, every fill is rejected, and the bucket leaks down under the new
@@ -446,6 +483,11 @@ the ones fuzzed in `test/src/lib/`:
   exactly the same buckets.
 - `levelAt` reports what is owed rather than what fits, which is the one thing
   `capacity - headroomAt` cannot do after a capacity cut.
+- `settle` returns the level `levelAt` reports and a checkpoint that never moves
+  backwards, and refuses the buckets `fill` refuses. A bucket settled before
+  every `leakRate` change leaks, over any history of rates, what each rate
+  leaked over the time it was in force; one that is not settled is re-rated for
+  the whole interval since its checkpoint.
 - A fill at an exponent far below the level's either lands or is refused, and
   never lands on the level word it started from, and a zero written at a
   non-zero exponent is still a zero amount.

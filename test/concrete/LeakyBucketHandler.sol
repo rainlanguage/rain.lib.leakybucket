@@ -32,13 +32,17 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// The one minter whose bucket this handler drives.
     address internal immutable MINTER;
 
-    /// Held fixed for the whole run, so the throughput bound the invariant
-    /// asserts stays exact.
-    Float internal immutable LEAK_RATE;
+    /// The largest leak rate the fuzzer may set: the starting capacity per
+    /// second, so one second can refill a whole burst.
+    uint256 internal constant LEAK_RATE_CEILING = 3600;
 
-    /// The timestamp the run started at, for the elapsed window in the
-    /// throughput bound.
-    uint256 public immutable START;
+    /// The leak rate currently in force.
+    uint256 public leakRate;
+
+    /// The most the bucket can have leaked so far: every wait, priced at the
+    /// rate in force while it passed. A rate change that re-rated time already
+    /// spent would let `minted` run ahead of the bound this feeds.
+    uint256 public leaked;
 
     /// The capacity currently in force, mirrored so the invariant can read the
     /// policy without a second source of truth.
@@ -54,12 +58,11 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     // harness with no funds and no authority, and a zero check would refuse an
     // input the library itself accepts.
     // forge-lint: disable-next-line(missing-zero-check)
-    constructor(LeakyBucketMintCap cap, address minter, uint256 capacity_, uint256 leakRate) {
+    constructor(LeakyBucketMintCap cap, address minter, uint256 capacity_, uint256 leakRate_) {
         CAP = cap;
         MINTER = minter;
-        LEAK_RATE = float(leakRate);
+        leakRate = leakRate_;
         capacity = capacity_;
-        START = block.timestamp;
     }
 
     /// A mint of an arbitrary size, at whatever point in the history the fuzzer
@@ -105,6 +108,7 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// Time passing between calls, which is the only thing that refills the
     /// bucket.
     function wait(uint32 gap) external {
+        leaked += uint256(gap) * leakRate;
         vm.warp(block.timestamp + gap);
     }
 
@@ -113,6 +117,13 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// all.
     function setCapacity(uint256 capacity_) external {
         capacity = bound(capacity_, 0, capacity);
-        CAP.setPolicy(MINTER, float(capacity), LEAK_RATE);
+        CAP.setPolicy(MINTER, float(capacity), float(leakRate));
+    }
+
+    /// Governance moving the sustained rate in either direction, zero
+    /// included, underneath an in-flight history.
+    function setLeakRate(uint256 leakRate_) external {
+        leakRate = bound(leakRate_, 0, LEAK_RATE_CEILING);
+        CAP.setPolicy(MINTER, float(capacity), float(leakRate));
     }
 }
