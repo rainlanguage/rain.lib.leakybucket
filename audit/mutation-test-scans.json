@@ -338,6 +338,98 @@
     }
   },
   {
+    "timestamp": "2026-10-03T12:43:31Z",
+    "commit": "ef1e48f68bf7c984c9ae14651ea6f33b7239db03",
+    "testsAfterCommit": "ef1e48f68bf7c984c9ae14651ea6f33b7239db03",
+    "publishedTag": "sol-v0.4.1",
+    "commitsAheadOfTag": 4,
+    "scope": "re-probe of src/lib/LibLeakyBucket.sol after a NatSpec-only change to headroomAt for #120. No executable line in src moved and test is untouched; the pass is re-run because the record is compared against the tree, not against the bytecode.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 19,
+      "mutantsKilledByPreExistingSuite": 19,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 19,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 58,
+      "testsAfter": 58,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "Clean pass: 19/19 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. The mutant set is unchanged. The suite command is not: mutants.toml named .mutation-test/suite.sh, which was never tracked, so the pass could not run from a fresh clone and aborted on a baseline with no proof of run. It points at the tracked .mutation-test/check.sh now, which gained the --force the suite comment already promised. Earlier entries were scored through the untracked wrapper and this one through the tracked one; the verdicts agree. This pass was mutation only: no adversarial enumeration was repeated, because no behaviour changed."
+    }
+  },
+  {
+    "timestamp": "2026-10-03T12:50:00Z",
+    "commit": "25e49b197d7b21ef4cb7e589916f21e5a1e644dd",
+    "testsAfterCommit": "25e49b197d7b21ef4cb7e589916f21e5a1e644dd",
+    "publishedTag": "sol-v0.4.1",
+    "commitsAheadOfTag": 4,
+    "scope": "src/lib/LibLeakyBucket.sol after the fillable domain check gained a negative stored level, a negative stored timestamp and a negative timestamp argument (#115).",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 22,
+      "mutantsKilledByPreExistingSuite": 19,
+      "mutantsSurvivedPreExistingSuite": 3,
+      "mutantsKilledAfter": 22,
+      "candidates": 1,
+      "confirmed": 1,
+      "testsBefore": 58,
+      "testsAfter": 63,
+      "coveragePRs": ["#123"],
+      "filed": [],
+      "notes": "The before numbers hold at f954fe853762551d07b83e21d9a1f9ef374f4257, the parent of the named commit: the new guards with the test tree as main had it. commit names the child because audit/check-scan-freshness.sh requires the newest record's commit to match HEAD in src/ and test/. At f954fe8: green 58 baseline, 19/22 killed, survivors M20, M21 and M22, each of which drops one of the three new checks. At 25e49b1: green 63 baseline, 22/22 killed, 0 no-run, 0 harness errors. M20 is killed by testANegativeLevelCannotBuyHeadroomAboveCapacity and testANegativeFractionIsRefusedLikeAnyNegative, M21 and M22 by testANegativeFractionIsRefusedLikeAnyNegative; the probe names the first failures only, and the three fuzzed testEntryPointsReject tests cover the same checks. M09, M10 and M16 to M18 were retargeted at the new spelling of the lines they mutate, with no change to the mutation. mutants.toml named .mutation-test/suite.sh, which is not tracked, so the suite command now names the tracked .mutation-test/check.sh; check.sh passes no --force, and forge recompiled the mutated source on its own, which M01 to M19 dying confirms. The one adversarial candidate is not new and is not filed again: rounding direction. rain-math-float 0.2.4 truncates toward zero in add, sub and mul, so level + amount is understated when it rounds and level - drain can go either way, against the ruling on #115 that the level is never understated. It stays open on #115 because the float library exposes no directed rounding to fix it with."
+    }
+  },
+  {
+    "timestamp": "2026-10-03T13:20:00Z",
+    "commit": "4e60fed7993806a615dc21be2bbb249aedc08da5",
+    "testsAfterCommit": "4e60fed7993806a615dc21be2bbb249aedc08da5",
+    "publishedTag": "sol-v0.4.1",
+    "commitsAheadOfTag": 6,
+    "scope": "re-probe of src/lib/LibLeakyBucket.sol after a lint fix to two tests on #123. src is unchanged since the previous entry; the test tree moved, so the matrix is re-established rather than assumed.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 22,
+      "mutantsKilledByPreExistingSuite": 22,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 22,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 63,
+      "testsAfter": 63,
+      "coveragePRs": ["#123"],
+      "filed": [],
+      "notes": "Clean pass: 22/22 killed, 0 survived, 0 no-run, 0 harness errors, on a green 63 baseline. The only change is in testEntryPointsRejectANegativeStoredTimestamp and testEntryPointsRejectANegativeTimestamp, whose fuzzed negative is now bounded by -MAX_SIGNED rather than by a cast of MAX_TIME that forge lint rejects as a truncating typecast. A first attempt at this pass was refused by the probe, not scored: forge reported no tests found against a build cache left by forge lint, so the baseline produced no proof of run. forge clean, then the pass re-run whole."
+    }
+  },
+  {
+    "timestamp": "2026-10-03T14:07:47Z",
+    "commit": "0d5c36748c8374a349693ea55dd84cbe391197e2",
+    "testsAfterCommit": "0d5c36748c8374a349693ea55dd84cbe391197e2",
+    "publishedTag": "sol-v0.4.2",
+    "commitsAheadOfTag": 6,
+    "scope": "re-probe of src/lib/LibLeakyBucket.sol after main was merged into #123. The merge brought in the headroomAt NatSpec rewording from #122; no executable line in src moved and test is as #123 had it.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 22,
+      "mutantsKilledByPreExistingSuite": 22,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 22,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 63,
+      "testsAfter": 63,
+      "coveragePRs": ["#123"],
+      "filed": [],
+      "notes": "Clean pass: 22/22 killed, 0 survived, 0 no-run, 0 harness errors, on a green 63 baseline, from a fresh clone. The mutant set is the 22 of #123 and the suite command is the tracked .mutation-test/check.sh with the --force #122 gave it; both sides of the merge had already repointed mutants.toml at it. This pass was mutation only: no adversarial enumeration was repeated, because no behaviour changed in the merge."
+    }
+  },
+  {
     "timestamp": "2026-10-03T13:13:53Z",
     "commit": "e6d0a40a6cf88c686ac60a65901588f8e26e4416",
     "testsAfterCommit": "e6d0a40a6cf88c686ac60a65901588f8e26e4416",
