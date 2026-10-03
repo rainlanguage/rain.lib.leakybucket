@@ -566,5 +566,28 @@
       "filed": [],
       "notes": "One mutation-probe pass over mutants.toml M01 to M34 at the named commit: green 83 baseline, 34/34 killed, 0 survived, 0 no-run, 0 harness errors. The source change, its tests and the six setPolicy mutants M29 to M34 were written together in that one commit, so there is no pass of the new mutants against the earlier 79-test suite and the before figures equal the after figures. M17, M18, M23 and M27 were retargeted at the new spelling of their lines and M27 was inverted to match fill looking at the amount first. No adversarial pass was run."
     }
+    },
+  {
+    "timestamp": "2026-10-03T21:55:22Z",
+    "commit": "e5eac0308687deec6bf42b689e7b1a1c417490c9",
+    "testsAfterCommit": "e5eac0308687deec6bf42b689e7b1a1c417490c9",
+    "publishedTag": "sol-v0.4.3",
+    "commitsAheadOfTag": 23,
+    "scope": "src/lib/LibLeakyBucket.sol after the leak and the checkpoint moved into one private unchecked helper, each exported entry point took its own single domain check, and setPolicy checked the stored level and timestamps directly instead of settling a stand-in bucket.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 36,
+      "mutantsKilledByPreExistingSuite": 36,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 36,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 84,
+      "testsAfter": 84,
+      "coveragePRs": ["#124"],
+      "filed": [],
+      "notes": "One mutation-probe pass over mutants.toml M01 to M36 at the named commit: green 84 baseline, 36/36 killed, 0 survived, 0 no-run, 0 harness errors. M03 to M06, M15 to M17 and M23 to M34 were retargeted at the new spelling of their lines; M30 now raises the level where it used to refuse the bucket, and M32 settles over a zero interval. M35 and M36 are new: setPolicy dropping its level and timestamp check, and setPolicy checking the stored policy it replaces. The suite went from 83 to 84 tests in the same two commits as the source change (testInvariantsHoldBehindTheCheckpoint replaced the afterInvariant assertion), and no pass of these mutants was run against the 83-test suite, so the before figures equal the after figures. No adversarial pass was run."
+    }
   }
 ]
