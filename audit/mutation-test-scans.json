@@ -589,5 +589,28 @@
       "filed": [],
       "notes": "One mutation-probe pass over mutants.toml M01 to M36 at the named commit: green 84 baseline, 36/36 killed, 0 survived, 0 no-run, 0 harness errors. M03 to M06, M15 to M17 and M23 to M34 were retargeted at the new spelling of their lines; M30 now raises the level where it used to refuse the bucket, and M32 settles over a zero interval. M35 and M36 are new: setPolicy dropping its level and timestamp check, and setPolicy checking the stored policy it replaces. The suite went from 83 to 84 tests in the same two commits as the source change (testInvariantsHoldBehindTheCheckpoint replaced the afterInvariant assertion), and no pass of these mutants was run against the 83-test suite, so the before figures equal the after figures. No adversarial pass was run."
     }
+  },
+  {
+    "timestamp": "2026-10-03T22:29:06Z",
+    "commit": "56ddf0ea463c62004922962b7237e20d1811e726",
+    "testsAfterCommit": "56ddf0ea463c62004922962b7237e20d1811e726",
+    "publishedTag": "sol-v0.4.3",
+    "commitsAheadOfTag": 26,
+    "scope": "src/lib/LibLeakyBucket.sol after the leak moved below the packed surface so that a product no Float holds drains the bucket instead of reverting ExponentOverflow, the leak helper took the bucket and a timestamp and returned the level alone, and the checkpoint became its own helper reached only by the writes.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 41,
+      "mutantsKilledByPreExistingSuite": 39,
+      "mutantsSurvivedPreExistingSuite": 2,
+      "mutantsKilledAfter": 41,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 84,
+      "testsAfter": 86,
+      "coveragePRs": ["#124"],
+      "filed": [],
+      "notes": "Two mutation-probe passes over mutants.toml M01 to M41. After: at the named commit, green 86 baseline, 41/41 killed, 0 survived, 0 no-run, 0 harness errors. Before: the named commit's src/ and mutants.toml under test/ as of 32209d6. Three of that suite's 84 tests are red on the new source without any mutant (testTheAmountGuardsComeBeforeALeakTheArithmeticCannotHold, which expected the ExponentOverflow revert the change removes, and testGasRejectedFill and testGasSteadyStateFill, whose measured figures fell under their bands), and the probe refuses a red baseline, so that pass ran with those three excluded by --no-match-test: green 81 baseline, 39/41 killed, 2 survived, 0 no-run, 0 harness errors. The survivors were M27 (fill leaks before it looks at the amount), which nothing in the remaining 81 kills, and M38 (the leak is packed before it is compared). The before figure for the other 39 is therefore a floor measured on 81 tests, not on 84. M03 to M06, M15 to M17, M23 to M27 and M30 to M36 were retargeted at the new spelling of their lines; M33 now returns the stored rate, there being no settled-at rate to return. M37 to M41 are new: the drained comparison, the unpacked leak, and each of the three writes going round the checkpoint helper. Tests added: testALeakNoFloatHoldsDrainsTheBucket, testALeakWithAnExponentOutOfRangeUnderTheLevelIsSubtracted, testNoLeakIsTooLargeToRead, testTheAmountGuardsComeBeforeArithmeticThatReverts, testSetPolicyToAZeroRateIsAPause. Tests removed: testTheAmountGuardsComeBeforeALeakTheArithmeticCannotHold, testARateRiseIsRetroactiveUnlessSettled, testAZeroRateIsAPauseOnlyWhenSettled. The two gas bands moved down 4,000 at the same width. No adversarial pass was run."
+    }
   }
 ]
