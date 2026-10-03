@@ -137,8 +137,11 @@ It reverts, and the revert takes both stores with it, on:
 | `LeakyBucketAmountNotCredited(level, amount)`          | the amount fits the headroom but does not raise the level, so it would charge nothing      |
 
 The four negative-bucket errors are checked before the amount, and the reads
-refuse them as well, so a read refuses exactly where a fill would. Every
-parameter in those errors is a `Float`, which the ABI names as `bytes32`.
+refuse them as well, so a read refuses exactly where a fill would. The leak is
+computed before the amount is looked at too, so on a bucket whose leak
+`rain.math.float` cannot represent, a fill reverts with that library's error
+whatever the amount, a zero or a negative one included. Every parameter in the
+errors above is a `Float`, which the ABI names as `bytes32`.
 
 ### Governance is yours
 
@@ -191,7 +194,9 @@ function setLeakRate(address minter, Float leakRate) external onlyGovernance {
 `capacity` or `leakRate` reverts on every later call for that bucket.
 
 A `capacity` change needs no settling, because the level does not depend on the
-capacity. Two properties make it safe to land at an arbitrary moment:
+capacity. `setCapacity` in `test/concrete/LeakyBucketMintCap.sol` is that write,
+with `checkPolicy` and no `settle`, and it is the capacity write the invariant
+handler makes. Two properties make it safe to land at an arbitrary moment:
 
 - **Lowering `capacity` below an outstanding level binds immediately.** Headroom
   reads zero, every fill is rejected, and the bucket leaks down under the new
@@ -288,29 +293,42 @@ in `test/concrete/` do:
 ### No checkpoint drift
 
 The leak is `elapsed * leakRate` computed from the checkpoint in one multiply,
-so checkpointing more often cannot change the result:
+so a checkpoint in between does not change the result:
 
 ```
-levelAt(fill(bucket, t1, amount), t2) == levelAt(levelAt(bucket, t1) + amount, t2)
+levelAt(settle(bucket, t1), t2) == levelAt(bucket, t2)
 ```
 
-for any `t0 <= t1 <= t2`, where `bucket` is checkpointed at `t0`: a fill at `t1`
-leaves the same level at `t2` as the same amount added to a checkpoint built by
-hand at `t1`. A zero amount fill is no longer the way to say this — `fill`
-refuses a zero amount with `LeakyBucketZeroAmount` — so the property is stated
-through a fill that does something. Exactly, at every input inside the fuzz
-bounds above, and it is also checked end to end through storage: a full bucket
-topped up by exactly one second of leak every second, with a write on each of
-those seconds, is still exactly full after half an hour of it. Per call
-checkpointing loses nothing.
+for any `t0 <= t1 <= t2`, where `bucket` is checkpointed at `t0` and
+`settle(bucket, t1)` is that bucket with both of `settle`'s returns stored: a
+checkpoint at `t1` with nothing filled leaves the level at `t2` that no
+checkpoint leaves. `fill` checkpoints through `settle`, so a fill at `t1` leaves
+at `t2` what the same amount on top of the settled level leaves. Exactly, at
+every input inside the fuzz bounds above, and it is also checked end to end
+through storage: a full bucket topped up by exactly one second of leak every
+second, with a write on each of those seconds, is still exactly full after half
+an hour of it.
 
-This is worth stating because the usual alternative does not have it.
+Outside those bounds it holds to the precision of the level and no further. A
+`Float` subtraction keeps about 67 digits, and `rain.math.float` at `0.2.4` does
+not direct its rounding, so a leak below the last digit the level holds is not
+taken off as it is. `test/src/lib/FloatHazards.t.sol` pins both outcomes against
+a level of `1e40`, whose last digit is `1e-27`: a leak of `1e-29` takes a whole
+`1e-27` off, and a leak of `1e-37` takes nothing. A read does that once. A
+checkpoint does it once per checkpoint, because the stored timestamp advances
+over the time whose leak was rounded. Ten settles a second apart at `1e-29` per
+second leak `1e-26` where the unsettled bucket reads `1e-27` down, which is the
+permissive direction: a unit in the level's last digit of headroom per
+checkpoint, from `fill` as much as from `settle`. At `1e-37` per second the same
+ten leak nothing where the unsettled bucket reads `1e-27` down.
+
+This is worth stating because the usual alternative loses far more.
 Implementations that store a `window` and leak at `capacity / window` per second
 take a floor division on every checkpoint, so each call discards the sub unit
 remainder, and a caller touching the bucket every second is credited measurably
 less leak than one touching it hourly. That makes call frequency part of the
-cap. Here the rate is a parameter rather than a quotient, so there is no per
-call remainder to lose.
+cap. Here the rate is a parameter rather than a quotient, so the only per call
+remainder is the one below the level's 67th digit.
 
 The cost is that `leakRate` is per second, so a policy written as "X per day" is
 `X / 86400` and is rounded once, off chain, where the rounding is deliberate and
@@ -351,10 +369,12 @@ the second it belongs to together, and the caller stores both.
 The library **reverts** rather than answering on the values that cannot mean
 anything — a negative `capacity`, `leakRate`, `level` or timestamp — and it
 refuses them at the parameter, by name, from both reads and the fill, before it
-looks at the amount. It refuses a zero amount and a negative amount by name as
-well. The negative amount is the case the old type carried for free: an amount
-was a `uint256` and could not be negative, where a `Float` can be, and a
-negative fill drains the bucket, so it mints under a cap it never reached.
+looks at the amount. Wherever the leak can be computed it refuses a zero amount
+and a negative amount by name as well; where it cannot, the arithmetic's own
+error comes first, as "Usage" says. The negative amount is the case the old type
+carried for free: an amount was a `uint256` and could not be negative, where a
+`Float` can be, and a negative fill drains the bucket, so it mints under a cap
+it never reached.
 
 ### Precision
 
@@ -480,14 +500,17 @@ the ones fuzzed in `test/src/lib/`:
 - Leaking never raises the level, at any input.
 - Exactly the reported headroom fits when it is positive, a zero headroom is
   refused as a zero fill, and any amount above it is rejected.
-- Checkpointing changes nothing.
+- Checkpointing changes nothing inside the fuzz bounds. "No checkpoint drift"
+  says what it changes at a rounding boundary.
 - Every clamp at zero goes the conservative way, per the table above.
 - A stored checkpoint never moves backwards, so a fill at a stale clock is not
   observable at any later second.
 - Reading answers everywhere inside the fillable domain, and the values outside
   it — a negative capacity, leak rate, level or timestamp — are refused by name
-  at both reads and at the fill, as are a zero and a negative amount. Every
-  error's selector is pinned to its signature.
+  at both reads and at the fill, as are a zero and a negative amount wherever
+  the leak can be computed. A leak the arithmetic cannot hold is that
+  arithmetic's refusal at every entry point, whatever the amount. Every error's
+  selector is pinned to its signature.
 - `headroomAt` and `fill` agree at every input either will answer, and refuse
   exactly the same buckets.
 - `levelAt` reports what is owed rather than what fits, which is the one thing
@@ -495,8 +518,9 @@ the ones fuzzed in `test/src/lib/`:
 - `settle` returns the level `levelAt` reports and a checkpoint that never moves
   backwards, and refuses the buckets `fill` refuses. A bucket settled before
   every `leakRate` change leaks, over any history of rates, what each rate
-  leaked over the time it was in force; one that is not settled is re-rated for
-  the whole interval since its checkpoint.
+  leaked over the time it was in force, exactly inside the fuzz bounds and to
+  the precision of the level outside them; one that is not settled is re-rated
+  for the whole interval since its checkpoint.
 - A fill at an exponent far below the level's either lands or is refused, and
   never lands on the level word it started from, and a zero written at a
   non-zero exponent is still a zero amount.
