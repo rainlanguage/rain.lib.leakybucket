@@ -43,9 +43,13 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     uint256 public leakRate;
 
     /// The most the bucket can have leaked so far: every wait, priced at the
-    /// rate in force while it passed. A rate change that re-rated time already
-    /// spent would let `minted` run ahead of the bound this feeds.
+    /// rate in force while it passed.
     uint256 public leaked;
+
+    /// The level the bucket should hold now, kept in words: each mint added,
+    /// each wait leaked at the rate in force while it passed, floored at zero.
+    /// A rate change that re-rated time already spent parts the cap from this.
+    uint256 public expectedLevel;
 
     /// The capacity currently in force, mirrored so the invariant can read the
     /// policy without a second source of truth.
@@ -82,6 +86,7 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
             // level by exactly what was minted.
             assertTrue(amountFloat.lte(headroomBefore));
             minted += amount;
+            expectedLevel += amount;
             assertTrue(CAP.level(MINTER).eq(levelBefore.add(amountFloat)));
         } catch (bytes memory reason) {
             // It was refused, so it must not have fitted, it must have been
@@ -111,14 +116,18 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// Time passing between calls, which is the only thing that refills the
     /// bucket.
     function wait(uint32 gap) external {
-        leaked += uint256(gap) * leakRate;
-        vm.warp(block.timestamp + gap);
+        pass(gap);
     }
 
     /// A wait short enough to leave part of a level standing.
     function tick(uint256 gap) external {
-        gap = bound(gap, 0, TICK_CEILING);
-        leaked += gap * leakRate;
+        pass(bound(gap, 0, TICK_CEILING));
+    }
+
+    function pass(uint256 gap) internal {
+        uint256 leak = gap * leakRate;
+        leaked += leak;
+        expectedLevel = leak >= expectedLevel ? 0 : expectedLevel - leak;
         vm.warp(block.timestamp + gap);
     }
 

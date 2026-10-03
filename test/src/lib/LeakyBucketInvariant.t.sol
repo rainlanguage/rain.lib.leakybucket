@@ -55,6 +55,13 @@ contract LeakyBucketInvariantTest is Test {
         assertTrue(cap.headroom(ALICE).lte(asFloat(CAPACITY)));
     }
 
+    /// The level is what was minted less what each rate leaked over the time
+    /// it was in force, at every step of every history. A rate change that
+    /// reached back over time already spent would break this at the write.
+    function invariant_levelLeaksAtTheRateInForce() external view {
+        assertTrue(cap.level(ALICE).eq(asFloat(handler.expectedLevel())));
+    }
+
     /// Cumulative throughput is bounded by one burst plus what each rate leaked
     /// over the time it was in force, however the calls are interleaved and
     /// however the rate moves.
