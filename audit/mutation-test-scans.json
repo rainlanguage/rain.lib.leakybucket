@@ -474,5 +474,28 @@
       "filed": [],
       "notes": "The before figures hold at 28ce84802bbe5e3bf2cddb3e6884e7a8e1922820, the parent of the named commit: the refactor with the test tree as the merge left it. commit names the child because audit/check-scan-freshness.sh requires the newest record to match HEAD in src/ and test/. At the parent: green 70 baseline, M01 to M26 in one pass 26/26 killed, and M27, written after that pass, probed alone at the same tree and killed. At the named commit: green 71 baseline, 27/27 killed, 0 survived, 0 no-run, 0 harness errors. The numbering differs from the 2026-10-03T13:13:53Z entry, whose M20 to M24 were the settle mutants: M20 to M22 are now the negative level and timestamp checks from #123 and settle is M23 to M26. The domain check has one call site, in settle, so M16 to M18 no longer delete a call; each has one entry point stop calling settle and repeat its steps without the check. The settle copy of M15 is gone because the checkpoint has one site. M05, M06, M13, M14 and M19 were retargeted at the new spelling of the lines they mutate. M27 moves the amount guards of fill ahead of settle. The one adversarial candidate is a revert precedence that moved, confirmed against main and not filed because it is the stated consequence of the single path: on a bucket whose leak overflows the float exponent, fill with a zero or negative amount reverted LeakyBucketZeroAmount or LeakyBucketNegativeAmount on main and reverts ExponentOverflow now, as settle, levelAt and headroomAt do. testALeakTheArithmeticCannotHoldIsRefusedBeforeTheAmountGuards pins it. The domain errors still precede the amount errors."
     }
+  },
+  {
+    "timestamp": "2026-10-03T18:28:19Z",
+    "commit": "821b30147689dbc3ace72c781270753b062f455e",
+    "testsAfterCommit": "821b30147689dbc3ace72c781270753b062f455e",
+    "publishedTag": "sol-v0.4.3",
+    "commitsAheadOfTag": 9,
+    "scope": "src/lib/LibLeakyBucket.sol, re-probed after a test-only rename of four variables that carried a trailing underscore; src/ is unchanged from the previous entry.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 27,
+      "mutantsKilledByPreExistingSuite": 27,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 27,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 71,
+      "testsAfter": 71,
+      "coveragePRs": ["#124"],
+      "filed": [],
+      "notes": "mutation-probe over mutants.toml M01 to M27 at the named commit: green 71 baseline, 27/27 killed, 0 survived, 0 no-run, 0 harness errors. No test was added or changed in meaning; the suite is the previous entry's with capacity_, leakRate_, level_ and after_ renamed. No adversarial pass was run for a rename."
+    }
   }
 ]
