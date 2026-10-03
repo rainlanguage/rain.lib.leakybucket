@@ -5,9 +5,13 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
-import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
+import {
+    LeakyBucketCapacityExceeded,
+    LeakyBucketNegativeCapacity,
+    LeakyBucketNegativeLeakRate
+} from "../../../src/lib/LibLeakyBucket.sol";
 import {workedCapacity, workedLeakRate, workedDrain, capacityOver} from "../../lib/WorkedPolicy.sol";
-import {float} from "../../lib/FloatWords.sol";
+import {float, signedFloat} from "../../lib/FloatWords.sol";
 import {LeakyBucketAsserts} from "../../abstract/LeakyBucketAsserts.sol";
 
 /// The library under a real storage layout and a real clock, which is where the
@@ -221,6 +225,60 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
 
         vm.warp(block.timestamp + workedDrain() / 2);
         assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
+    }
+
+    /// A negative capacity is refused at the setter and nothing is stored, so
+    /// the bucket still reads, mints and takes a later policy.
+    function testSetPolicyRefusesANegativeCapacity(int256 capacity) external {
+        Float capacityFloat = signedFloat(bound(capacity, -MAX_SIGNED, -1));
+        vm.prank(ALICE);
+        sCap.mint(capacityOver(2));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        sCap.setPolicy(ALICE, capacityFloat, workedLeakRate());
+
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
+
+        sCap.setPolicy(ALICE, capacityOver(10), workedLeakRate());
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
+
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate());
+        vm.prank(ALICE);
+        sCap.mint(capacityOver(2));
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+    }
+
+    /// A negative leak rate is refused at the setter and nothing is stored, so
+    /// the bucket still reads, mints and takes a later policy.
+    function testSetPolicyRefusesANegativeLeakRate(int256 leakRate) external {
+        Float leakRateFloat = signedFloat(bound(leakRate, -MAX_SIGNED, -1));
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+        sCap.setPolicy(ALICE, workedCapacity(), leakRateFloat);
+
+        vm.warp(block.timestamp + workedDrain() / 2);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
+
+        sCap.setPolicy(ALICE, workedCapacity(), float(0));
+        vm.warp(block.timestamp + workedDrain());
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
+
+        vm.prank(ALICE);
+        sCap.mint(capacityOver(2));
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+    }
+
+    /// A zero capacity and a zero leak rate are stored, and can be replaced.
+    function testSetPolicyAcceptsAZeroPolicy() external {
+        sCap.setPolicy(ALICE, float(0), float(0));
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate());
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
     }
 
     /// The second a given amount fits again is exactly the second the leak pays

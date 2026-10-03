@@ -690,6 +690,9 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
         this.externalSettle(float(level), float(checkpoint), float(timestamp), capacityFloat, float(leakRate));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        this.externalCheckPolicy(capacityFloat, float(leakRate));
     }
 
     /// A negative leak rate fills the bucket as time passes, which is the
@@ -727,6 +730,17 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
 
         vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
         this.externalSettle(float(level), float(checkpoint), float(timestamp), float(capacity), leakRateFloat);
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+        this.externalCheckPolicy(float(capacity), leakRateFloat);
+    }
+
+    /// Zero and every positive policy pass `checkPolicy`.
+    function testCheckPolicyAcceptsANonNegativePolicy(uint256 capacity, uint256 leakRate) external pure {
+        capacity = bound(capacity, 0, MAX_LEVEL);
+        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
+        LibLeakyBucket.checkPolicy(float(capacity), float(leakRate));
+        LibLeakyBucket.checkPolicy(float(0), float(0));
     }
 
     // ---------------------------------------------------------------- //
