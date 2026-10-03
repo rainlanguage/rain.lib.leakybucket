@@ -20,6 +20,13 @@ error LeakyBucketNegativeCapacity(Float capacity);
 /// `leakRate` is negative, so the bucket would fill as time passed.
 error LeakyBucketNegativeLeakRate(Float leakRate);
 
+/// The stored `level` is negative, which reads as more headroom than the
+/// capacity.
+error LeakyBucketNegativeLevel(Float level);
+
+/// A timestamp is negative: the stored one, or the one read or filled at.
+error LeakyBucketNegativeTimestamp(Float timestamp);
+
 /// `amount` fits the headroom but does not raise `level`, so accepting it would
 /// charge nothing against the capacity.
 error LeakyBucketAmountNotCredited(Float level, Float amount);
@@ -79,14 +86,24 @@ library LibLeakyBucket {
     /// a fill would.
     ///
     /// A negative capacity admits no fill and a negative leak rate fills the
-    /// bucket as time passes, which is the opposite of a leak. Neither is a
-    /// stricter bucket, so neither is treated as one.
-    function checkFillableDomain(Float capacity, Float leakRate) private pure {
-        if (capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {
-            revert LeakyBucketNegativeCapacity(capacity);
+    /// bucket as time passes, which is the opposite of a leak. A negative level
+    /// is headroom above the capacity. None is a stricter bucket, so none is
+    /// treated as one.
+    function checkFillableDomain(LeakyBucket memory bucket, Float timestamp) private pure {
+        if (bucket.capacity.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeCapacity(bucket.capacity);
         }
-        if (leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {
-            revert LeakyBucketNegativeLeakRate(leakRate);
+        if (bucket.leakRate.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeLeakRate(bucket.leakRate);
+        }
+        if (bucket.level.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeLevel(bucket.level);
+        }
+        if (bucket.timestamp.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeTimestamp(bucket.timestamp);
+        }
+        if (timestamp.lt(LibDecimalFloat.FLOAT_ZERO)) {
+            revert LeakyBucketNegativeTimestamp(timestamp);
         }
     }
 
@@ -135,7 +152,7 @@ library LibLeakyBucket {
     /// @param timestamp When to read at.
     /// @return The level at `timestamp`.
     function levelAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
-        checkFillableDomain(bucket.capacity, bucket.leakRate);
+        checkFillableDomain(bucket, timestamp);
         return levelAt(bucket.level, bucket.timestamp, timestamp, bucket.leakRate);
     }
 
@@ -145,7 +162,7 @@ library LibLeakyBucket {
     /// @param timestamp When to read at.
     /// @return Headroom at `timestamp`.
     function headroomAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
-        checkFillableDomain(bucket.capacity, bucket.leakRate);
+        checkFillableDomain(bucket, timestamp);
         return headroomFrom(bucket.capacity, levelAt(bucket.level, bucket.timestamp, timestamp, bucket.leakRate));
     }
 
@@ -162,7 +179,7 @@ library LibLeakyBucket {
         pure
         returns (Float level, Float checkpoint)
     {
-        checkFillableDomain(bucket.capacity, bucket.leakRate);
+        checkFillableDomain(bucket, timestamp);
         level = fillAt(bucket.level, bucket.timestamp, timestamp, bucket.capacity, bucket.leakRate, amount);
         checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);
     }

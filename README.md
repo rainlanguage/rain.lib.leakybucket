@@ -132,11 +132,13 @@ It reverts, and the revert takes both stores with it, on:
 | `LeakyBucketNegativeAmount(amount)`                    | the amount is negative, which would drain the bucket and mint under a cap it never reached |
 | `LeakyBucketNegativeCapacity(capacity)`                | the capacity is negative, so no fill could ever fit                                        |
 | `LeakyBucketNegativeLeakRate(leakRate)`                | the leak rate is negative, so the bucket would fill as time passed                         |
+| `LeakyBucketNegativeLevel(level)`                      | the stored level is negative, which reads as more headroom than the capacity               |
+| `LeakyBucketNegativeTimestamp(timestamp)`              | the stored timestamp, or the one read or filled at, is negative                            |
 | `LeakyBucketAmountNotCredited(level, amount)`          | the amount fits the headroom but does not raise the level, so it would charge nothing      |
 
-The last two are checked before the amount, and the reads refuse them as well,
-so a read refuses exactly where a fill would. Every parameter in those errors is
-a `Float`, which the ABI names as `bytes32`.
+The four negative-bucket errors are checked before the amount, and the reads
+refuse them as well, so a read refuses exactly where a fill would. Every
+parameter in those errors is a `Float`, which the ABI names as `bytes32`.
 
 ### Governance is yours
 
@@ -303,13 +305,13 @@ pays out exactly the headroom the clamp just declined. That makes the property
 above hold end to end and not only on a read. `fill` hands back the level and
 the second it belongs to together, and the caller stores both.
 
-The library **reverts** rather than answering on the two parameters that cannot
-mean anything — a negative `capacity` and a negative `leakRate` — and it refuses
-them at the parameter, by name, from both reads and the fill, before it looks at
-the amount. It refuses a zero amount and a negative amount by name as well. The
-negative amount is the case the old type carried for free: an amount was a
-`uint256` and could not be negative, where a `Float` can be, and a negative fill
-drains the bucket, so it mints under a cap it never reached.
+The library **reverts** rather than answering on the values that cannot mean
+anything — a negative `capacity`, `leakRate`, `level` or timestamp — and it
+refuses them at the parameter, by name, from both reads and the fill, before it
+looks at the amount. It refuses a zero amount and a negative amount by name as
+well. The negative amount is the case the old type carried for free: an amount
+was a `uint256` and could not be negative, where a `Float` can be, and a
+negative fill drains the bucket, so it mints under a cap it never reached.
 
 ### Precision
 
@@ -438,9 +440,9 @@ the ones fuzzed in `test/src/lib/`:
 - Every clamp at zero goes the conservative way, per the table above.
 - A stored checkpoint never moves backwards, so a fill at a stale clock is not
   observable at any later second.
-- Reading answers everywhere inside the fillable domain, and the two parameters
-  outside it — a negative capacity and a negative leak rate — are refused by
-  name at both reads and at the fill, as are a zero and a negative amount. Every
+- Reading answers everywhere inside the fillable domain, and the values outside
+  it — a negative capacity, leak rate, level or timestamp — are refused by name
+  at both reads and at the fill, as are a zero and a negative amount. Every
   error's selector is pinned to its signature.
 - `headroomAt` and `fill` agree at every input either will answer, and refuse
   exactly the same buckets.
