@@ -107,15 +107,20 @@ library LibLeakyBucket {
         }
     }
 
-    /// The bucket checkpointed at `timestamp` with nothing filled: the level
-    /// leaked forward at the rate in force, and the later of `timestamp` and
-    /// the stored timestamp, so a backwards clock leaks nothing and never
-    /// re-credits leak on the next fill.
+    /// The level at `timestamp`: the stored level leaked forward at the rate in
+    /// force, a backwards clock leaking nothing.
     ///
-    /// The only place the domain is checked, the level is leaked and the
-    /// checkpoint is chosen. `levelAt`, `headroomAt` and `fill` are each
-    /// written in terms of it, so a read refuses exactly where a fill does and
-    /// answers from the same level.
+    /// The only place the domain is checked and the level is leaked. `settle`,
+    /// `levelAt`, `headroomAt` and `fill` each reach both through it, so a read
+    /// refuses exactly where a fill does and answers from the same level.
+    function leakedLevel(LeakyBucket memory bucket, Float timestamp) private pure returns (Float) {
+        checkFillableDomain(bucket, timestamp);
+        return leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);
+    }
+
+    /// The bucket checkpointed at `timestamp` with nothing filled: the level
+    /// `levelAt` reports, and the later of `timestamp` and the stored
+    /// timestamp, so a backwards clock never re-credits leak on the next fill.
     ///
     /// For a `leakRate` change. A bucket records its level and when, not the
     /// rate that was in force, so the leak over the whole interval since the
@@ -124,14 +129,19 @@ library LibLeakyBucket {
     /// earned, and a zero rate is not a pause, because the time spent at zero
     /// is leaked at the restored rate. `checkPolicy` the new rate, store both
     /// returns and then write the new rate, in one transaction, and each rate
-    /// is charged for exactly the time it was in force.
+    /// is charged for the time it was in force.
+    ///
+    /// To the precision of the level, not exactly. A `Float` subtraction keeps
+    /// about 67 digits and its rounding is not directed: a leak below the
+    /// level's last digit takes a whole digit off it or, further below, takes
+    /// nothing, and the checkpoint advances over that time either way. At that
+    /// scale a settle changes what a later read returns, in either direction.
     /// @param bucket The bucket, still carrying the old rate. Not modified.
     /// @param timestamp When to settle at.
     /// @return level The settled level, to store as `bucket.level`.
     /// @return checkpoint The new timestamp, to store as `bucket.timestamp`.
     function settle(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float level, Float checkpoint) {
-        checkFillableDomain(bucket, timestamp);
-        level = leak(bucket.level, saturatingSub(timestamp, bucket.timestamp), bucket.leakRate);
+        level = leakedLevel(bucket, timestamp);
         checkpoint = LibDecimalFloat.max(timestamp, bucket.timestamp);
     }
 
@@ -147,8 +157,7 @@ library LibLeakyBucket {
     /// @param timestamp When to read at.
     /// @return The level at `timestamp`.
     function levelAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
-        (Float level,) = settle(bucket, timestamp);
-        return level;
+        return leakedLevel(bucket, timestamp);
     }
 
     /// The most `fill` would accept at `timestamp`: a positive headroom fits
@@ -159,11 +168,12 @@ library LibLeakyBucket {
     /// @param timestamp When to read at.
     /// @return Headroom at `timestamp`.
     function headroomAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
-        return headroomFrom(bucket.capacity, levelAt(bucket, timestamp));
+        return headroomFrom(bucket.capacity, leakedLevel(bucket, timestamp));
     }
 
     /// Fill `amount` at `timestamp`: `settle`, then `amount` on top of the
-    /// settled level.
+    /// settled level. The amount is looked at after the settle, so whatever
+    /// `settle` reverts with, `fill` reverts with for every amount.
     /// @param bucket The bucket. Not modified.
     /// @param timestamp When to fill at.
     /// @param amount The amount to fill.
