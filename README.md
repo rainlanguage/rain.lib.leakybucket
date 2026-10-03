@@ -437,7 +437,7 @@ the ones fuzzed in `test/src/lib/`:
   the refill afterwards is bounded by `capacity` as well.
 - Leaking never raises the level, at any input.
 - Exactly the reported headroom fits when it is positive, a zero headroom is
-  refused as a zero fill, and one unit more does not fit.
+  refused as a zero fill, and any amount above it is rejected.
 - Checkpointing changes nothing.
 - Every clamp at zero goes the conservative way, per the table above.
 - A stored checkpoint never moves backwards, so a fill at a stale clock is not
