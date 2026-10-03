@@ -543,5 +543,28 @@
       "filed": ["#125"],
       "notes": "The before figures hold at 02ee251, the parent of the named commit: the source change with the test files as 9f58a63 left them, probed in a separate clone. commit names the child because audit/check-scan-freshness.sh requires the newest record to match HEAD in src/ and test/. At the parent: green 75 baseline, mutation-probe over mutants.toml M01 to M28, 28/28 killed, 0 survived, 0 no-run, 0 harness errors. At the named commit: green 79 baseline, 28/28 killed, 0 survived, 0 no-run, 0 harness errors. Both probes finished just before the timestamp. M05, M06, M16, M17, M23, M24 and M26 were retargeted at the lines as they read after the move; M23 and M24 were renamed, since the lines they break are now in leakedLevel rather than settle. No mutant was added. The tool printed no killing test names for M17, M27 or M28 at the named commit. The four new tests are testACapacityWriteAloneNeedsNoSettle, testSetCapacityRefusesANegativeCapacity, testACapacityWriteAloneChangesNoLevel and testASettleBelowTheLastDigitOfTheLevelShowsInLaterReads; the invariant handler's setCapacity now makes the unsettled write. None was needed to kill a src mutant, and the harness setCapacity is outside mutants.toml and was not probed. One adversarial candidate, filed as #125 and not triaged: a leak below the level's last digit takes a whole digit off the level at each checkpoint, the permissive direction, or further below takes nothing; the last test named pins the values as they are and asserts nothing about which is right."
     }
+  },
+  {
+    "timestamp": "2026-10-03T21:31:51Z",
+    "commit": "241f740abae0ec775fc9c9c919ebcaa46f429ce0",
+    "testsAfterCommit": "241f740abae0ec775fc9c9c919ebcaa46f429ce0",
+    "publishedTag": "sol-v0.4.3",
+    "commitsAheadOfTag": 20,
+    "scope": "src/lib/LibLeakyBucket.sol after setPolicy became the one exported policy change, checkPolicy went private, fill went back to looking at the amount before the leak, and levelAt took over the domain check and the leak.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 34,
+      "mutantsKilledByPreExistingSuite": 34,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 34,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 83,
+      "testsAfter": 83,
+      "coveragePRs": ["#124"],
+      "filed": [],
+      "notes": "One mutation-probe pass over mutants.toml M01 to M34 at the named commit: green 83 baseline, 34/34 killed, 0 survived, 0 no-run, 0 harness errors. The source change, its tests and the six setPolicy mutants M29 to M34 were written together in that one commit, so there is no pass of the new mutants against the earlier 79-test suite and the before figures equal the after figures. M17, M18, M23 and M27 were retargeted at the new spelling of their lines and M27 was inverted to match fill looking at the amount first. No adversarial pass was run."
+    }
   }
 ]
