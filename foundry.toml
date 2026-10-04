@@ -15,11 +15,11 @@ libs = ["dependencies"]
 fuzz.runs = 4096
 
 [dependencies]
-forge-std = "1.16.2"
+forge-std = "1.17.0"
 # Every field of a bucket is a `Float`: the level, the capacity, the leak rate
 # and the timestamp. Saturation is gone with the fixed point, since a `Float`
 # has no type boundary a bucket reaches; what remains is the clamp at zero.
-"rain-math-float" = "0.2.4"
+"rain-math-float" = "0.2.5"
 
 [soldeer]
 recursive_deps = false

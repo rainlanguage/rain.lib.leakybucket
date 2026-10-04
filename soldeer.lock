@@ -1,13 +1,13 @@
 [[dependencies]]
 name = "forge-std"
-version = "1.16.2"
-url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_16_2_03-07-2026_07:37:45_forge-std-1.16.zip"
-checksum = "405dccc9d60d753f6abc412b4adf0359f4390f65dbadbbb277a12b4946ed8969"
-integrity = "5fb4325b60d7d4194bd0481e2f94398cf1d9c6561dd12a66fb2748ef4a68205f"
+version = "1.17.0"
+url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_17_0_01-10-2026_10:59:49_forge-std-1.17.zip"
+checksum = "a77ad38d5fbef0ec10d1f4d191698e5fbaa2bffbee5d1aced91a39da5e9b908c"
+integrity = "fa706c8a7caf3426c90f75e6aafa3224b0a6c899b490800cf6944e4ec42f9344"
 
 [[dependencies]]
 name = "rain-math-float"
-version = "0.2.4"
-url = "https://soldeer-revisions.s3.amazonaws.com/rain-math-float/0_2_4_27-09-2026_15:02:57_rain.math.zip"
-checksum = "a13f6e73e32324a38a2da2826484c2a03dd1ed1514851c557d90ec8f3323b940"
-integrity = "70b5b63f234f24b7719bf6a296caafb9120ce185d7a3dced231a660aca7adf83"
+version = "0.2.5"
+url = "https://soldeer-revisions.s3.amazonaws.com/rain-math-float/0_2_5_02-10-2026_10:34:50_rain.math.zip"
+checksum = "403c9a47d91114bbcaffbfe4d9c4240f7e760f86b896daa6d75d1ca891cc72b8"
+integrity = "b14524ac29868af6dbaabd1086f53e142b8f1170d994972eb948fa646f817768"
