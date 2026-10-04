@@ -137,12 +137,11 @@ It reverts, and the revert takes both stores with it, on:
 | `LeakyBucketAmountNotCredited(level, amount)`          | the amount fits the headroom but does not raise the level, so it would charge nothing      |
 
 The four negative-bucket errors are checked before the amount, and `levelAt`,
-`headroomAt` and `settle` refuse them as well, so each refuses exactly where a
-fill would. The amount is looked at before the leak is computed, so a zero or a
-negative amount gets its named error on every bucket those four checks pass,
-including one whose leak `rain.math.float` cannot represent; there a positive
-amount reverts with that library's error. Every parameter in the errors above is
-a `Float`, which the ABI names as `bytes32`.
+fill would. The leak is computed before the amount is looked at, so on a bucket
+whose leak `rain.math.float` cannot represent every amount reverts with that
+library's error. Every parameter in the errors above is amount reverts with that
+library's error. Every parameter in the errors above is a `Float`, which the ABI
+names as `bytes32`.
 
 ### Governance is yours
 
@@ -184,13 +183,6 @@ function setPolicy(address minter, Float capacity, Float leakRate) external only
     sBuckets[minter] = LibLeakyBucket.setPolicy(sBuckets[minter], timestamp, capacity, leakRate);
 }
 ```
-
-A negative `capacity` or `leakRate` that reached storage some other way makes
-every read, `settle` and `fill` revert for that bucket. `setPolicy` still takes
-it: the level does not depend on the capacity, and a stored negative `leakRate`
-is no rate to settle at, so no leak is credited for the time since the
-checkpoint and the checkpoint moves to the timestamp. A negative stored `level`
-or timestamp it refuses like every other entry point.
 
 `settle` on its own is the plain checkpoint: the level at the stored rate and
 the later of the timestamp and the stored one, with nothing filled and no policy
@@ -369,12 +361,11 @@ the second it belongs to together, and the caller stores both.
 The library **reverts** rather than answering on the values that cannot mean
 anything — a negative `capacity`, `leakRate`, `level` or timestamp — and it
 refuses them at the parameter, by name, from `levelAt`, `headroomAt`, `settle`
-and `fill`, before it looks at the amount; `setPolicy` refuses the same level
-and timestamps, and the policy it is asked to store. `fill` then refuses a zero
-amount and a negative amount by name, before it computes the leak. The negative
-amount is the case the old type carried for free: an amount was a `uint256` and
-could not be negative, where a `Float` can be, and a negative fill drains the
-bucket, so it mints under a cap it never reached.
+`fill` and `setPolicy`; `setPolicy` also refuses the policy it is asked to
+store. `fill` then refuses a zero amount and a negative amount by name. The
+negative amount is the case the old type carried for free: an amount was a
+`uint256` and could not be negative, where a `Float` can be, and a negative fill
+drains the bucket, so it mints under a cap it never reached.
 
 ### Precision
 
@@ -507,11 +498,10 @@ the ones fuzzed in `test/src/lib/`:
   observable at any later second.
 - Reading answers everywhere inside the fillable domain, and the values outside
   it — a negative capacity, leak rate, level or timestamp — are refused by name
-  at `levelAt`, `headroomAt`, `settle` and `fill`. `fill` refuses a zero and a
-  negative amount by name on every bucket inside the domain, before the leak is
-  computed; a leak the arithmetic cannot hold is that arithmetic's refusal at
-  every entry point that computes it. Every error's selector is pinned to its
-  signature.
+  at `levelAt`, `headroomAt`, `settle`, `fill` and `setPolicy`. `fill` refuses a
+  zero and a negative amount by name; a leak the arithmetic cannot hold is that
+  arithmetic's refusal at every entry point. Every error's selector is pinned to
+  its signature.
 - `headroomAt` and `fill` agree at every input either will answer, and refuse
   exactly the same buckets.
 - `levelAt` reports what is owed rather than what fits, which is the one thing
@@ -522,8 +512,7 @@ the ones fuzzed in `test/src/lib/`:
   bucket settled at the stored rate and carrying the new policy. A bucket whose
   policy only ever changes through it leaks, over any history of rates, what
   each rate leaked over the time it was in force, exactly inside the fuzz bounds
-  and to the precision of the level outside them. On a stored negative
-  `leakRate` it credits no leak and moves the checkpoint.
+  and to the precision of the level outside them.
 - A fill at an exponent far below the level's either lands or is refused, and
   never lands on the level word it started from, and a zero written at a
   non-zero exponent is still a zero amount.

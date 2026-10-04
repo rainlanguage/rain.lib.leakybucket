@@ -34,13 +34,13 @@ replacement = "return LibDecimalFloat.max(a.add(b), LibDecimalFloat.FLOAT_ZERO);
 [[mutants]]
 name = "M03 the leak is measured backwards, so the level is the thing leaked from"
 file = "src/lib/LibLeakyBucket.sol"
-target = "saturatingSub(bucket.level, elapsed.mul(leakRate))"
-replacement = "saturatingSub(elapsed.mul(leakRate), bucket.level)"
+target = "saturatingSub(bucket.level, elapsed.mul(bucket.leakRate))"
+replacement = "saturatingSub(elapsed.mul(bucket.leakRate), bucket.level)"
 
 [[mutants]]
 name = "M04 the leak ignores the rate, leaking one unit per unit of time"
 file = "src/lib/LibLeakyBucket.sol"
-target = "saturatingSub(bucket.level, elapsed.mul(leakRate))"
+target = "saturatingSub(bucket.level, elapsed.mul(bucket.leakRate))"
 replacement = "saturatingSub(bucket.level, elapsed)"
 
 [[mutants]]
@@ -116,33 +116,31 @@ replacement = """            revert LeakyBucketAmountNotCredited(levelNow, amoun
 [[mutants]]
 name = "M15 the checkpoint takes the earlier time, re-crediting leak on the next fill"
 file = "src/lib/LibLeakyBucket.sol"
-target = "LibDecimalFloat.max(timestamp, bucket.timestamp));"
-replacement = "LibDecimalFloat.min(timestamp, bucket.timestamp));"
+target = "LibDecimalFloat.max(timestamp, bucket.timestamp)"
+replacement = "LibDecimalFloat.min(timestamp, bucket.timestamp)"
 
-# --- each entry point checks the domain itself and then reaches the one
-# unchecked leak. Each mutant here has one entry point reach the leak without
-# its check. ---
+# --- settle is the one place the domain check and the leak meet. Each mutant
+# here has one entry point go round it to the unchecked leak. ---
 
 [[mutants]]
-name = "M16 headroomAt answers on a bucket fill would refuse"
+name = "M16 headroomAt goes round settle and answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
 target = "return headroomFrom(bucket.capacity, levelAt(bucket, timestamp));"
-replacement = """(Float level,) = leak(bucket, timestamp, bucket.leakRate);
+replacement = """(Float level,) = leak(bucket, timestamp);
         return headroomFrom(bucket.capacity, level);"""
 
 [[mutants]]
-name = "M17 settle answers on a bucket fill would refuse"
+name = "M17 settle does not check the domain"
 file = "src/lib/LibLeakyBucket.sol"
 target = """        checkFillableDomain(bucket, timestamp);
-        return leak(bucket, timestamp, bucket.leakRate);"""
-replacement = """        return leak(bucket, timestamp, bucket.leakRate);"""
+        return leak(bucket, timestamp);"""
+replacement = """        return leak(bucket, timestamp);"""
 
 [[mutants]]
-name = "M18 fill does not check the domain before it looks at the amount"
+name = "M18 fill goes round settle and fills a bucket outside the domain"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkFillableDomain(bucket, timestamp);
-        if (amount.isZero()) {"""
-replacement = """        if (amount.isZero()) {"""
+target = "(levelNow, checkpoint) = settle(bucket, timestamp);"
+replacement = "(levelNow, checkpoint) = leak(bucket, timestamp);"
 
 [[mutants]]
 name = "M19 an amount too small to be recorded is accepted and charges nothing"
@@ -171,116 +169,79 @@ file = "src/lib/LibLeakyBucket.sol"
 target = "if (timestamp.lt(LibDecimalFloat.FLOAT_ZERO)) {"
 replacement = "if (false) {"
 
-# --- levelAt, and settle beside it ---
+# --- levelAt and the leak ---
 
 [[mutants]]
-name = "M23 levelAt does not check the domain"
+name = "M23 levelAt goes round settle and answers on a bucket fill would refuse"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkFillableDomain(bucket, timestamp);
-        (Float level,) = leak("""
-replacement = """        (Float level,) = leak("""
+target = "(Float level,) = settle(bucket, timestamp);"
+replacement = "(Float level,) = leak(bucket, timestamp);"
 
 [[mutants]]
 name = "M24 the leak takes nothing off the stored level"
 file = "src/lib/LibLeakyBucket.sol"
-target = "saturatingSub(bucket.level, elapsed.mul(leakRate))"
+target = "saturatingSub(bucket.level, elapsed.mul(bucket.leakRate))"
 replacement = "saturatingSub(bucket.level, elapsed.mul(LibDecimalFloat.FLOAT_ZERO))"
 
 [[mutants]]
 name = "M25 a write at a backwards clock moves the checkpoint back"
 file = "src/lib/LibLeakyBucket.sol"
-target = "LibDecimalFloat.max(timestamp, bucket.timestamp));"
-replacement = "timestamp);"
+target = "LibDecimalFloat.max(timestamp, bucket.timestamp)"
+replacement = "timestamp"
 
 [[mutants]]
 name = "M26 settle settles nothing, so a rate change re-rates the whole interval"
 file = "src/lib/LibLeakyBucket.sol"
 target = """        checkFillableDomain(bucket, timestamp);
-        return leak(bucket, timestamp, bucket.leakRate);"""
+        return leak(bucket, timestamp);"""
 replacement = """        checkFillableDomain(bucket, timestamp);
         return (bucket.level, bucket.timestamp);"""
-
-# --- fill checks the bucket, then the amount, then leaks ---
-
-[[mutants]]
-name = "M27 fill leaks before it looks at the amount"
-file = "src/lib/LibLeakyBucket.sol"
-target = """        if (amount.isZero()) {
-            revert LeakyBucketZeroAmount();
-        }
-        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
-            revert LeakyBucketNegativeAmount(amount);
-        }
-        Float levelNow;
-        (levelNow, checkpoint) = leak(bucket, timestamp, bucket.leakRate);"""
-replacement = """        Float levelNow;
-        (levelNow, checkpoint) = leak(bucket, timestamp, bucket.leakRate);
-        if (amount.isZero()) {
-            revert LeakyBucketZeroAmount();
-        }
-        if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
-            revert LeakyBucketNegativeAmount(amount);
-        }"""
 
 # --- the policy check, which the domain check is written in terms of ---
 
 [[mutants]]
-name = "M28 the domain check does not check the policy"
+name = "M27 the domain check does not check the policy"
 file = "src/lib/LibLeakyBucket.sol"
 target = """        checkPolicy(bucket.capacity, bucket.leakRate);
-        checkLevelAndTimestamps(bucket, timestamp);"""
-replacement = """        checkLevelAndTimestamps(bucket, timestamp);"""
+        if (bucket.level.lt(LibDecimalFloat.FLOAT_ZERO)) {"""
+replacement = """        if (bucket.level.lt(LibDecimalFloat.FLOAT_ZERO)) {"""
 
 # --- setPolicy ---
 
 [[mutants]]
-name = "M29 setPolicy does not check the policy it is given"
+name = "M28 setPolicy does not check the policy it is given"
 file = "src/lib/LibLeakyBucket.sol"
 target = """        checkPolicy(capacity, leakRate);
-        checkLevelAndTimestamps(bucket, timestamp);"""
-replacement = """        checkLevelAndTimestamps(bucket, timestamp);"""
+        (Float level, Float checkpoint) = settle(bucket, timestamp);"""
+replacement = """        (Float level, Float checkpoint) = settle(bucket, timestamp);"""
 
 [[mutants]]
-name = "M30 setPolicy settles at a stored negative rate, raising the level"
+name = "M29 setPolicy settles at the new rate, re-rating the whole interval"
 file = "src/lib/LibLeakyBucket.sol"
-target = "Float storedRate = LibDecimalFloat.max(bucket.leakRate, LibDecimalFloat.FLOAT_ZERO);"
-replacement = "Float storedRate = bucket.leakRate;"
+target = "(Float level, Float checkpoint) = settle(bucket, timestamp);"
+replacement = """bucket.leakRate = leakRate;
+        (Float level, Float checkpoint) = settle(bucket, timestamp);"""
 
 [[mutants]]
-name = "M31 setPolicy settles at the new rate, re-rating the whole interval"
+name = "M30 setPolicy settles nothing"
 file = "src/lib/LibLeakyBucket.sol"
-target = "Float storedRate = LibDecimalFloat.max(bucket.leakRate, LibDecimalFloat.FLOAT_ZERO);"
-replacement = "Float storedRate = leakRate;"
+target = "(Float level, Float checkpoint) = settle(bucket, timestamp);"
+replacement = "(Float level, Float checkpoint) = (bucket.level, bucket.timestamp);"
 
 [[mutants]]
-name = "M32 setPolicy checks the bucket and settles nothing"
-file = "src/lib/LibLeakyBucket.sol"
-target = "(Float level, Float checkpoint) = leak(bucket, timestamp, storedRate);"
-replacement = "(Float level, Float checkpoint) = leak(bucket, bucket.timestamp, storedRate);"
-
-[[mutants]]
-name = "M33 setPolicy returns the rate it settled at instead of the new one"
+name = "M31 setPolicy returns the stored rate instead of the new one"
 file = "src/lib/LibLeakyBucket.sol"
 target = "capacity: capacity, leakRate: leakRate});"
-replacement = "capacity: capacity, leakRate: storedRate});"
+replacement = "capacity: capacity, leakRate: bucket.leakRate});"
 
 [[mutants]]
-name = "M34 setPolicy returns the stored capacity instead of the new one"
+name = "M32 setPolicy returns the stored capacity instead of the new one"
 file = "src/lib/LibLeakyBucket.sol"
 target = "capacity: capacity, leakRate: leakRate});"
 replacement = "capacity: bucket.capacity, leakRate: leakRate});"
 
 [[mutants]]
-name = "M35 setPolicy does not check the stored level or the timestamps"
+name = "M33 setPolicy goes round settle and takes a bucket outside the domain"
 file = "src/lib/LibLeakyBucket.sol"
-target = """        checkLevelAndTimestamps(bucket, timestamp);
-        Float storedRate"""
-replacement = """        Float storedRate"""
-
-[[mutants]]
-name = "M36 setPolicy checks the stored policy, so a stored negative one is never replaced"
-file = "src/lib/LibLeakyBucket.sol"
-target = """        checkLevelAndTimestamps(bucket, timestamp);
-        Float storedRate"""
-replacement = """        checkFillableDomain(bucket, timestamp);
-        Float storedRate"""
+target = "(Float level, Float checkpoint) = settle(bucket, timestamp);"
+replacement = "(Float level, Float checkpoint) = leak(bucket, timestamp);"

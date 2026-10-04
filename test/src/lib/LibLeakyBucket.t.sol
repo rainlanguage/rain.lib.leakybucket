@@ -785,76 +785,6 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         assertFloatEq(stored.leakRate, float(leakRates[0]));
     }
 
-    /// A stored negative leak rate is no rate to settle at. `setPolicy` credits
-    /// no leak, moves the checkpoint, and the bucket it returns answers.
-    function testSetPolicyOnAStoredNegativeLeakRateCreditsNoLeak(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        int256 storedCapacity,
-        int256 storedLeakRate,
-        uint256 capacity,
-        uint256 leakRate
-    ) external pure {
-        level = bound(level, 0, MAX_LEVEL);
-        checkpoint = bound(checkpoint, 0, MAX_TIME);
-        timestamp = bound(timestamp, 0, MAX_TIME);
-        capacity = bound(capacity, 0, MAX_LEVEL);
-        leakRate = bound(leakRate, 0, MAX_LEAK_RATE);
-        Float storedLeakRateFloat = signedFloat(bound(storedLeakRate, -MAX_SIGNED, -1));
-        LeakyBucket memory stored = bucket(
-            float(level),
-            float(checkpoint),
-            signedFloat(bound(storedCapacity, -MAX_SIGNED, MAX_SIGNED)),
-            storedLeakRateFloat
-        );
-        uint256 later = timestamp > checkpoint ? timestamp : checkpoint;
-
-        LeakyBucket memory set = LibLeakyBucket.setPolicy(stored, float(timestamp), float(capacity), float(leakRate));
-        assertFloatEq(set.level, float(level));
-        assertFloatEq(set.timestamp, float(later));
-        assertFloatEq(set.capacity, float(capacity));
-        assertFloatEq(set.leakRate, float(leakRate));
-        assertFloatEq(LibLeakyBucket.levelAt(set, float(later)), float(level));
-
-        // The stored rate is still what the caller holds.
-        assertFloatEq(stored.leakRate, storedLeakRateFloat);
-    }
-
-    /// A stored negative capacity beside a rate that is not negative: the rate
-    /// is one to settle at, and the level does not depend on the capacity, so
-    /// `setPolicy` settles as it does on any bucket.
-    function testSetPolicyOnAStoredNegativeCapacitySettlesAtTheStoredRate(
-        uint256 level,
-        uint256 checkpoint,
-        uint256 timestamp,
-        int256 storedCapacity,
-        uint256 storedLeakRate,
-        uint256 capacity
-    ) external {
-        level = bound(level, 0, MAX_LEVEL);
-        checkpoint = bound(checkpoint, 0, MAX_TIME);
-        timestamp = bound(timestamp, 0, MAX_TIME);
-        storedLeakRate = bound(storedLeakRate, 0, MAX_LEAK_RATE);
-        capacity = bound(capacity, 0, MAX_LEVEL);
-        Float storedCapacityFloat = signedFloat(bound(storedCapacity, -MAX_SIGNED, -1));
-        LeakyBucket memory stored = bucket(float(level), float(checkpoint), storedCapacityFloat, float(storedLeakRate));
-
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, storedCapacityFloat));
-        this.externalSettle(
-            float(level), float(checkpoint), float(timestamp), storedCapacityFloat, float(storedLeakRate)
-        );
-
-        uint256 elapsed = timestamp > checkpoint ? timestamp - checkpoint : 0;
-        uint256 leaked = elapsed * storedLeakRate;
-
-        LeakyBucket memory set = LibLeakyBucket.setPolicy(stored, float(timestamp), float(capacity), float(0));
-        assertFloatEq(set.level, float(leaked >= level ? 0 : level - leaked));
-        assertFloatEq(set.timestamp, float(timestamp > checkpoint ? timestamp : checkpoint));
-        assertFloatEq(set.capacity, float(capacity));
-        assertFloatEq(set.leakRate, float(0));
-    }
-
     /// The worked example of a rate rise, through `setPolicy`: 100 filled at
     /// second 0 leaking 1 a second has earned 10 by second 10. The rate goes
     /// to 100 in that second and the headroom is still 10; a second later it
@@ -956,18 +886,17 @@ contract LibLeakyBucketTest is LeakyBucketAsserts {
         );
     }
 
-    /// `fill` looks at the amount before it computes the leak, so on a bucket
-    /// whose leak the float arithmetic cannot hold a zero and a negative
-    /// amount still get their own errors. Everything that computes the leak
-    /// there reverts with the arithmetic's.
-    function testTheAmountGuardsComeBeforeALeakTheArithmeticCannotHold() external {
+    /// Every entry point settles first, so on a bucket whose leak the float
+    /// arithmetic cannot hold each one reverts with the arithmetic's error,
+    /// `fill` included whatever the amount.
+    function testALeakTheArithmeticCannotHoldIsRefusedByEveryEntryPoint() external {
         Float big = LibDecimalFloat.packLossless(1, type(int32).max);
         bytes memory overflow =
             abi.encodeWithSelector(ExponentOverflow.selector, int256(1), 2 * int256(type(int32).max));
 
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketZeroAmount.selector));
+        vm.expectRevert(overflow);
         this.externalFill(float(1), float(0), big, float(1), big, float(0));
-        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeAmount.selector, signedFloat(-1)));
+        vm.expectRevert(overflow);
         this.externalFill(float(1), float(0), big, float(1), big, signedFloat(-1));
 
         vm.expectRevert(overflow);
