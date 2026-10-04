@@ -14,7 +14,8 @@ import {workedCapacity, workedLeakRate, workedDrain} from "../../lib/WorkedPolic
 /// The bands are higher than the fixed point ones they replace, and measured
 /// rather than carried across: a `Float` operation is a library call over a
 /// packed coefficient and exponent rather than an opcode, and a bucket now
-/// writes two slots where it wrote one.
+/// writes two slots where it wrote one. A steady state fill went from the
+/// 9,000-16,000 band to 30,048.
 contract LibLeakyBucketGasTest is Test {
     using LibDecimalFloat for Float;
 
@@ -64,8 +65,8 @@ contract LibLeakyBucketGasTest is Test {
     function testGasSteadyStateFill() external {
         uint256 gas = measure(address(sPrimed), LibDecimalFloat.packLossless(1, 0));
         console2.log("steady state fill", gas);
-        assertGt(gas, 23_000);
-        assertLt(gas, 30_000);
+        assertGt(gas, 27_000);
+        assertLt(gas, 34_000);
     }
 
     /// A rejected fill costs the reads and the revert, and writes nothing.
@@ -108,7 +109,7 @@ contract LibLeakyBucketGasTest is Test {
         assertEq(vm.load(address(sPrimed), bytes32(uint256(0))), sPrimedSlotAtSetUp);
 
         console2.log("rejected fill", gas);
-        assertGt(gas, 21_000);
-        assertLt(gas, 28_000);
+        assertGt(gas, 25_000);
+        assertLt(gas, 32_000);
     }
 }

@@ -3,9 +3,6 @@
 pragma solidity ^0.8.25;
 
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
-import {
-    LibDecimalFloatImplementation
-} from "rain-math-float-0.2.4/src/lib/implementation/LibDecimalFloatImplementation.sol";
 
 /// A fill of `amount` does not fit: `level + amount > capacity`.
 error LeakyBucketCapacityExceeded(Float capacity, Float level, Float amount);
@@ -54,9 +51,12 @@ struct LeakyBucket {
 /// same arithmetic as the level rather than a separate fixed point domain the
 /// caller converts across.
 ///
-/// The one saturation is at zero: a leak never takes the level below it and a
-/// backwards clock credits no leak. A leak too large for a `Float` is a leak
-/// above the level like any other, so it drains the bucket and nothing reverts.
+/// Nothing saturates at a type boundary any more, because a `Float` has no
+/// boundary a bucket reaches: the level, the capacity and the timestamp were
+/// each bounded by the field they were packed into, and none of them is packed
+/// now. What remains of the old saturation is `saturatingSub` at zero — a leak
+/// never takes the level below it and a backwards clock credits no leak — which
+/// is a property of the bucket rather than of the arithmetic.
 library LibLeakyBucket {
     using LibDecimalFloat for Float;
 
@@ -65,31 +65,12 @@ library LibLeakyBucket {
         return LibDecimalFloat.max(a.sub(b), LibDecimalFloat.FLOAT_ZERO);
     }
 
-    /// The level of `bucket` at `timestamp`, saturating at zero, with nothing
-    /// checked. A backwards clock leaks nothing.
-    ///
-    /// `LibDecimalFloat.mul` reverts on a product whose exponent does not fit a
-    /// `Float`, which would refuse every call on the bucket for good. The leak
-    /// is multiplied and compared unpacked instead, where the exponent has 256
-    /// bits, and only a level is ever packed.
-    function leakedLevel(LeakyBucket memory bucket, Float timestamp) private pure returns (Float) {
-        (int256 elapsedCoefficient, int256 elapsedExponent) = saturatingSub(timestamp, bucket.timestamp).unpack();
-        (int256 rateCoefficient, int256 rateExponent) = bucket.leakRate.unpack();
-        (int256 leakCoefficient, int256 leakExponent) =
-            LibDecimalFloatImplementation.mul(elapsedCoefficient, elapsedExponent, rateCoefficient, rateExponent);
-        (int256 levelCoefficient, int256 levelExponent) = bucket.level.unpack();
-        if (LibDecimalFloatImplementation.gte(leakCoefficient, leakExponent, levelCoefficient, levelExponent)) {
-            return LibDecimalFloat.FLOAT_ZERO;
-        }
-        (levelCoefficient, levelExponent) =
-            LibDecimalFloatImplementation.sub(levelCoefficient, levelExponent, leakCoefficient, leakExponent);
-        return LibDecimalFloat.packArithmeticResult(levelCoefficient, levelExponent);
-    }
-
-    /// The later of `timestamp` and the stored timestamp, so a backwards clock
-    /// never moves the checkpoint back.
-    function checkpointAt(LeakyBucket memory bucket, Float timestamp) private pure returns (Float) {
-        return LibDecimalFloat.max(timestamp, bucket.timestamp);
+    /// `bucket` leaked to `timestamp` at `leakRate`, with nothing checked: the
+    /// level, saturating at zero, then the later of `timestamp` and the stored
+    /// timestamp. A backwards clock leaks nothing.
+    function leak(LeakyBucket memory bucket, Float timestamp, Float leakRate) private pure returns (Float, Float) {
+        Float elapsed = saturatingSub(timestamp, bucket.timestamp);
+        return (saturatingSub(bucket.level, elapsed.mul(leakRate)), LibDecimalFloat.max(timestamp, bucket.timestamp));
     }
 
     /// `capacity - levelNow`, saturating at zero.
@@ -144,7 +125,8 @@ library LibLeakyBucket {
     /// @return The level at `timestamp`.
     function levelAt(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float) {
         checkFillableDomain(bucket, timestamp);
-        return leakedLevel(bucket, timestamp);
+        (Float level,) = leak(bucket, timestamp, bucket.leakRate);
+        return level;
     }
 
     /// The bucket checkpointed at `timestamp` with nothing filled: the level
@@ -162,7 +144,7 @@ library LibLeakyBucket {
     /// @return checkpoint The new timestamp, to store as `bucket.timestamp`.
     function settle(LeakyBucket memory bucket, Float timestamp) internal pure returns (Float level, Float checkpoint) {
         checkFillableDomain(bucket, timestamp);
-        return (leakedLevel(bucket, timestamp), checkpointAt(bucket, timestamp));
+        return leak(bucket, timestamp, bucket.leakRate);
     }
 
     /// `bucket` under a new policy from `timestamp`: settled at the stored
@@ -175,18 +157,14 @@ library LibLeakyBucket {
     /// not a pause, because the time spent at zero is leaked at the restored
     /// rate. Settled first, each rate is charged for the time it was in force.
     ///
-    /// Reverts on a negative `capacity` or `leakRate`, so neither is stored.
-    /// The stored policy is being replaced, so it is not checked, and a bucket
-    /// refused everywhere else for its stored policy takes a new one here. A
-    /// stored leak rate that is negative is no rate to settle at: no leak is
-    /// credited and the checkpoint still moves.
-    ///
-    /// A negative stored level or timestamp is refused here as everywhere. No
-    /// policy repairs one; the caller rewrites the field.
+    /// Reverts on a negative `capacity` or `leakRate`, so neither is stored,
+    /// and on a negative stored level or timestamp. The stored policy is being
+    /// replaced, so it is not checked. A stored leak rate that is already
+    /// negative is no rate to settle at: no leak is credited and the checkpoint
+    /// still moves, so such a bucket takes a policy rather than refusing every
+    /// call for good.
     /// @param bucket The bucket under its stored policy. Not modified.
-    /// @param timestamp When the new policy starts. Behind the stored
-    /// timestamp, the policy starts at the stored one: nothing is leaked and
-    /// the checkpoint stays.
+    /// @param timestamp When the new policy starts.
     /// @param capacity The new capacity.
     /// @param leakRate The new leak rate.
     /// @return The bucket to store, all four fields.
@@ -197,11 +175,9 @@ library LibLeakyBucket {
     {
         checkPolicy(capacity, leakRate);
         checkLevelAndTimestamps(bucket, timestamp);
-        Float level = bucket.leakRate.lt(LibDecimalFloat.FLOAT_ZERO) ? bucket.level : leakedLevel(bucket, timestamp);
-        return
-            LeakyBucket({
-                level: level, timestamp: checkpointAt(bucket, timestamp), capacity: capacity, leakRate: leakRate
-            });
+        Float storedRate = LibDecimalFloat.max(bucket.leakRate, LibDecimalFloat.FLOAT_ZERO);
+        (Float level, Float checkpoint) = leak(bucket, timestamp, storedRate);
+        return LeakyBucket({level: level, timestamp: checkpoint, capacity: capacity, leakRate: leakRate});
     }
 
     /// The most `fill` would accept at `timestamp`: a positive headroom fits
@@ -235,8 +211,8 @@ library LibLeakyBucket {
         if (amount.lt(LibDecimalFloat.FLOAT_ZERO)) {
             revert LeakyBucketNegativeAmount(amount);
         }
-        Float levelNow = leakedLevel(bucket, timestamp);
-        checkpoint = checkpointAt(bucket, timestamp);
+        Float levelNow;
+        (levelNow, checkpoint) = leak(bucket, timestamp, bucket.leakRate);
         if (amount.gt(headroomFrom(bucket.capacity, levelNow))) {
             revert LeakyBucketCapacityExceeded(bucket.capacity, levelNow, amount);
         }
