@@ -5,9 +5,13 @@ pragma solidity =0.8.25;
 import {Test} from "forge-std-1.16.2/src/Test.sol";
 import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketMintCap} from "../../concrete/LeakyBucketMintCap.sol";
-import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
+import {
+    LeakyBucketCapacityExceeded,
+    LeakyBucketNegativeCapacity,
+    LeakyBucketNegativeLeakRate
+} from "../../../src/lib/LibLeakyBucket.sol";
 import {workedCapacity, workedLeakRate, workedDrain, capacityOver} from "../../lib/WorkedPolicy.sol";
-import {float} from "../../lib/FloatWords.sol";
+import {float, signedFloat} from "../../lib/FloatWords.sol";
 import {LeakyBucketAsserts} from "../../abstract/LeakyBucketAsserts.sol";
 
 /// The library under a real storage layout and a real clock, which is where the
@@ -82,7 +86,6 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         // leak each second: every mint fits, and the bucket stays full.
         LeakyBucketMintCap other = new LeakyBucketMintCap();
         other.setPolicy(BOB, workedCapacity(), workedLeakRate());
-        vm.warp(1_700_000_000);
         vm.prank(BOB);
         other.mint(workedCapacity());
         for (uint256 i = 0; i < workedDrain() / 2; i++) {
@@ -181,6 +184,148 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
         assertFloatEq(sCap.headroom(ALICE), capacityOver(20));
     }
 
+    /// `setCapacity` binds at once and keeps the stored rate. BOB takes the
+    /// same history through `setPolicy` with the rate restated, and reads the
+    /// same at every step.
+    function testSetCapacityKeepsTheStoredRate() external {
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+        vm.prank(BOB);
+        sCap.mint(workedCapacity());
+        vm.warp(block.timestamp + workedDrain() / 2);
+
+        sCap.setCapacity(ALICE, capacityOver(10));
+        sCap.setPolicy(BOB, capacityOver(10), workedLeakRate());
+
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
+        assertCapacityExceeded(mintRefused(sCap, ALICE, float(1)), capacityOver(10), capacityOver(2), float(1));
+        assertFloatEq(sCap.level(BOB), sCap.level(ALICE));
+        assertFloatEq(sCap.headroom(BOB), sCap.headroom(ALICE));
+
+        // The time before the write and the time after it are leaked once
+        // each.
+        vm.warp(block.timestamp + workedDrain() / 2 - workedDrain() / 20);
+        assertFloatEq(sCap.level(ALICE), capacityOver(20));
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(20));
+        assertFloatEq(sCap.level(BOB), sCap.level(ALICE));
+        assertFloatEq(sCap.headroom(BOB), sCap.headroom(ALICE));
+
+        sCap.setCapacity(ALICE, workedCapacity());
+        Float raised = workedCapacity().sub(capacityOver(20));
+        assertFloatEq(sCap.level(ALICE), capacityOver(20));
+        assertFloatEq(sCap.headroom(ALICE), raised);
+        vm.prank(ALICE);
+        sCap.mint(raised);
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+    }
+
+    /// `setCapacity` refuses a negative capacity as `setPolicy` does, and stores
+    /// nothing.
+    function testSetCapacityRefusesANegativeCapacity(int256 capacity) external {
+        Float capacityFloat = signedFloat(bound(capacity, -MAX_SIGNED, -1));
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        sCap.setCapacity(ALICE, capacityFloat);
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
+    }
+
+    /// A rate rise through a setter that settles first prices the time already
+    /// spent at the old rate, so the same second offers what it offered before
+    /// the write.
+    function testRateRiseDoesNotReRateThePast() external {
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+        vm.warp(block.timestamp + workedDrain() / 10);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(10));
+
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate().mul(float(10)));
+
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(10));
+        assertFloatEq(sCap.level(ALICE), workedCapacity().sub(capacityOver(10)));
+        assertCapacityExceeded(
+            mintRefused(sCap, ALICE, capacityOver(10).add(float(1))),
+            workedCapacity(),
+            workedCapacity().sub(capacityOver(10)),
+            capacityOver(10).add(float(1))
+        );
+
+        // From here the new rate applies: ten units a second.
+        vm.warp(block.timestamp + 1);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(10).add(float(10)));
+    }
+
+    /// A zero rate set and lifted through that setter is a pause: the time
+    /// spent at zero leaks nothing when the rate comes back.
+    function testZeroRateIsAPause() external {
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+
+        sCap.setPolicy(ALICE, workedCapacity(), float(0));
+        vm.warp(block.timestamp + workedDrain() * 10);
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate());
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertCapacityExceeded(mintRefused(sCap, ALICE, float(1)), workedCapacity(), workedCapacity(), float(1));
+
+        vm.warp(block.timestamp + workedDrain() / 2);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
+    }
+
+    /// A negative capacity is refused at the setter and nothing is stored, so
+    /// the bucket still reads, mints and takes a later policy.
+    function testSetPolicyRefusesANegativeCapacity(int256 capacity) external {
+        Float capacityFloat = signedFloat(bound(capacity, -MAX_SIGNED, -1));
+        vm.prank(ALICE);
+        sCap.mint(capacityOver(2));
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeCapacity.selector, capacityFloat));
+        sCap.setPolicy(ALICE, capacityFloat, workedLeakRate());
+
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
+
+        sCap.setPolicy(ALICE, capacityOver(10), workedLeakRate());
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
+
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate());
+        vm.prank(ALICE);
+        sCap.mint(capacityOver(2));
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+    }
+
+    /// A negative leak rate is refused at the setter and nothing is stored, so
+    /// the bucket still reads, mints and takes a later policy.
+    function testSetPolicyRefusesANegativeLeakRate(int256 leakRate) external {
+        Float leakRateFloat = signedFloat(bound(leakRate, -MAX_SIGNED, -1));
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+
+        vm.expectRevert(abi.encodeWithSelector(LeakyBucketNegativeLeakRate.selector, leakRateFloat));
+        sCap.setPolicy(ALICE, workedCapacity(), leakRateFloat);
+
+        vm.warp(block.timestamp + workedDrain() / 2);
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
+
+        sCap.setPolicy(ALICE, workedCapacity(), float(0));
+        vm.warp(block.timestamp + workedDrain());
+        assertFloatEq(sCap.headroom(ALICE), capacityOver(2));
+
+        vm.prank(ALICE);
+        sCap.mint(capacityOver(2));
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+    }
+
+    /// A zero capacity and a zero leak rate are stored, and can be replaced.
+    function testSetPolicyAcceptsAZeroPolicy() external {
+        sCap.setPolicy(ALICE, float(0), float(0));
+        assertFloatEq(sCap.headroom(ALICE), float(0));
+
+        sCap.setPolicy(ALICE, workedCapacity(), workedLeakRate());
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
+    }
+
     /// The second a given amount fits again is exactly the second the leak pays
     /// for it, and not one second earlier.
     function testTheSecondAHalfCapacityFitsAgain() external {
@@ -258,6 +403,25 @@ contract LeakyBucketEmbeddingTest is LeakyBucketAsserts {
 
         assertFloatEq(minted, sCap.totalMinted());
         assertTrue(minted.lte(workedCapacity().add(float(block.timestamp - start).mul(workedLeakRate()))));
+    }
+
+    /// A policy set at a clock behind the checkpoint stores the whole bucket:
+    /// the level as it was, the checkpoint where it was, and the new policy.
+    function testSetPolicyBehindTheCheckpointKeepsTheCheckpoint() external {
+        vm.prank(ALICE);
+        sCap.mint(workedCapacity());
+        uint256 filled = block.timestamp;
+
+        vm.warp(filled - workedDrain());
+        sCap.setPolicy(ALICE, workedCapacity().mul(float(2)), workedLeakRate().mul(float(2)));
+        assertFloatEq(sCap.level(ALICE), workedCapacity());
+        assertFloatEq(sCap.headroom(ALICE), workedCapacity());
+
+        vm.warp(filled);
+        assertFloatEq(sCap.level(ALICE), workedCapacity());
+
+        vm.warp(filled + workedDrain() / 4);
+        assertFloatEq(sCap.level(ALICE), capacityOver(2));
     }
 
     /// A clock that steps backwards banks no credit, through real storage.

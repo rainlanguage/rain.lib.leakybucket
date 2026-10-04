@@ -32,13 +32,25 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     /// The one minter whose bucket this handler drives.
     address internal immutable MINTER;
 
-    /// Held fixed for the whole run, so the throughput bound the invariant
-    /// asserts stays exact.
-    Float internal immutable LEAK_RATE;
+    /// The largest leak rate the fuzzer may set, and the longest `tick`. Both
+    /// small against the starting capacity, so a history can hold a level that
+    /// has not fully drained when the rate moves. Past a full drain a re-rated
+    /// interval and a correctly rated one read the same.
+    uint256 internal constant LEAK_RATE_CEILING = 10;
+    uint256 internal constant TICK_CEILING = 3600;
 
-    /// The timestamp the run started at, for the elapsed window in the
-    /// throughput bound.
-    uint256 public immutable START;
+    /// The leak rate currently in force.
+    uint256 public leakRate;
+
+    /// The most the bucket can have leaked so far: at each write, the time
+    /// since the checkpoint priced at the rate in force over it.
+    uint256 public leaked;
+
+    /// The level the bucket should hold at `checkpoint`, kept in words, and
+    /// the latest second a write landed at. A write is a mint that lands or a
+    /// policy change; a clock behind `checkpoint` leaves it where it is.
+    uint256 internal levelAtCheckpoint;
+    uint256 internal checkpoint;
 
     /// The capacity currently in force, mirrored so the invariant can read the
     /// policy without a second source of truth.
@@ -54,12 +66,35 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
     // harness with no funds and no authority, and a zero check would refuse an
     // input the library itself accepts.
     // forge-lint: disable-next-line(missing-zero-check)
-    constructor(LeakyBucketMintCap cap, address minter, uint256 capacity_, uint256 leakRate) {
+    constructor(LeakyBucketMintCap cap, address minter, uint256 initialCapacity, uint256 initialLeakRate) {
         CAP = cap;
         MINTER = minter;
-        LEAK_RATE = float(leakRate);
-        capacity = capacity_;
-        START = block.timestamp;
+        leakRate = initialLeakRate;
+        capacity = initialCapacity;
+        checkpoint = block.timestamp;
+    }
+
+    /// The level the bucket should hold now: what it held at `checkpoint`,
+    /// less the time since at the rate in force, floored at zero. A rate change
+    /// that re-rated time already spent parts the cap from this.
+    function expectedLevel() public view returns (uint256) {
+        uint256 leak = elapsed() * leakRate;
+        return leak >= levelAtCheckpoint ? 0 : levelAtCheckpoint - leak;
+    }
+
+    function elapsed() internal view returns (uint256) {
+        // forge-lint: disable-next-line(block-timestamp)
+        return block.timestamp > checkpoint ? block.timestamp - checkpoint : 0;
+    }
+
+    /// The model's side of a write that adds `added` to the level.
+    function write(uint256 added) internal {
+        leaked += elapsed() * leakRate;
+        levelAtCheckpoint = expectedLevel() + added;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp > checkpoint) {
+            checkpoint = block.timestamp;
+        }
     }
 
     /// A mint of an arbitrary size, at whatever point in the history the fuzzer
@@ -76,6 +111,7 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
             // level by exactly what was minted.
             assertTrue(amountFloat.lte(headroomBefore));
             minted += amount;
+            write(amount);
             assertTrue(CAP.level(MINTER).eq(levelBefore.add(amountFloat)));
         } catch (bytes memory reason) {
             // It was refused, so it must not have fitted, it must have been
@@ -108,11 +144,32 @@ contract LeakyBucketHandler is LeakyBucketAsserts {
         vm.warp(block.timestamp + gap);
     }
 
+    /// A wait short enough to leave part of a level standing.
+    function tick(uint256 gap) external {
+        vm.warp(block.timestamp + bound(gap, 0, TICK_CEILING));
+    }
+
+    /// The clock stepping to before the latest write, by no more than a `tick`
+    /// can make up, so the calls that follow land behind the checkpoint.
+    function stepBack(uint256 gap) external {
+        vm.warp(checkpoint - bound(gap, 1, TICK_CEILING));
+    }
+
     /// Governance moving the burst around underneath an in-flight history,
     /// which is the case a fixed loop with a constant policy cannot reach at
     /// all.
-    function setCapacity(uint256 capacity_) external {
-        capacity = bound(capacity_, 0, capacity);
-        CAP.setPolicy(MINTER, float(capacity), LEAK_RATE);
+    function setCapacity(uint256 newCapacity) external {
+        capacity = bound(newCapacity, 0, capacity);
+        CAP.setCapacity(MINTER, float(capacity));
+        write(0);
+    }
+
+    /// Governance moving the sustained rate in either direction, zero
+    /// included, underneath an in-flight history.
+    function setLeakRate(uint256 newLeakRate) external {
+        newLeakRate = bound(newLeakRate, 0, LEAK_RATE_CEILING);
+        CAP.setPolicy(MINTER, float(capacity), float(newLeakRate));
+        write(0);
+        leakRate = newLeakRate;
     }
 }

@@ -6,7 +6,7 @@ import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFl
 import {LibLeakyBucket, LeakyBucket} from "../../src/lib/LibLeakyBucket.sol";
 
 /// @title LeakyBucketMintCap
-/// @notice Test harness: one bucket per minter, a mint, and a governance setter.
+/// @notice Test harness: one bucket per minter, a mint, and governance setters.
 contract LeakyBucketMintCap {
     using LibDecimalFloat for Float;
 
@@ -17,22 +17,21 @@ contract LeakyBucketMintCap {
     Float public totalMinted;
 
     /// Where governance goes.
-    ///
-    /// No capacity bound to check. The old harness refused a capacity over
-    /// `LEAKY_BUCKET_LEVEL_MAX` because a larger one could not be packed; a
-    /// `Float` capacity has no such ceiling, and `fill` rejects the capacities
-    /// that are actually meaningless (the negative ones) itself.
     function setPolicy(address minter, Float capacity, Float leakRate) external {
-        LeakyBucket storage bucket = sBuckets[minter];
-        bucket.capacity = capacity;
-        bucket.leakRate = leakRate;
+        sBuckets[minter] = LibLeakyBucket.setPolicy(sBuckets[minter], now_(), capacity, leakRate);
+    }
+
+    /// A capacity alone: `setPolicy` at the stored leak rate.
+    function setCapacity(address minter, Float capacity) external {
+        LeakyBucket memory bucket = sBuckets[minter];
+        sBuckets[minter] = LibLeakyBucket.setPolicy(bucket, now_(), capacity, bucket.leakRate);
     }
 
     /// The whole enforcement path: load the minter's bucket, hand it to `fill`,
     /// store the level and checkpoint it returns.
     function mint(Float amount) external {
-        (Float level_, Float checkpoint) = LibLeakyBucket.fill(sBuckets[msg.sender], now_(), amount);
-        sBuckets[msg.sender].level = level_;
+        (Float newLevel, Float checkpoint) = LibLeakyBucket.fill(sBuckets[msg.sender], now_(), amount);
+        sBuckets[msg.sender].level = newLevel;
         sBuckets[msg.sender].timestamp = checkpoint;
         totalMinted = totalMinted.add(amount);
     }
