@@ -430,26 +430,26 @@
     }
   },
   {
-    "timestamp": "2026-10-04T09:33:13Z",
-    "commit": "d1c0df630d90d8918736678a05e4d58de5ab14a5",
-    "testsAfterCommit": "d1c0df630d90d8918736678a05e4d58de5ab14a5",
+    "timestamp": "2026-10-04T10:18:47Z",
+    "commit": "e0cdbce3086af31b7977008be4aa8cbfb4974e98",
+    "testsAfterCommit": "e0cdbce3086af31b7977008be4aa8cbfb4974e98",
     "publishedTag": "sol-v0.4.3",
-    "commitsAheadOfTag": 28,
-    "scope": "src/lib/LibLeakyBucket.sol across the whole of #124: settle and setPolicy exported, fill and the reads on one path through an unchecked leak helper, write-time policy validation.",
+    "commitsAheadOfTag": 31,
+    "scope": "src/lib/LibLeakyBucket.sol across the whole of #124: settle and setPolicy exported, with fill, levelAt and setPolicy written in terms of settle, and write-time policy validation.",
     "tool": "adversarial-mutation-test",
     "skillVersion": "0.35.0",
     "summary": {
-      "behaviours": 36,
+      "behaviours": 33,
       "mutantsKilledByPreExistingSuite": 22,
       "mutantsSurvivedPreExistingSuite": 0,
-      "mutantsKilledAfter": 36,
+      "mutantsKilledAfter": 33,
       "candidates": 0,
       "confirmed": 0,
       "testsBefore": 63,
-      "testsAfter": 84,
+      "testsAfter": 82,
       "coveragePRs": ["#124"],
       "filed": [],
-      "notes": "One record for the whole pull request. At the named commit: green 84 baseline, mutation-probe over mutants.toml M01 to M36, 36/36 killed, 0 survived, 0 no-run, 0 harness errors. The before figures are the previous entry's: 22 mutants, all killed by the 63 tests on main. The other 14 mutants target settle, setPolicy and the shared helpers, which do not exist on main, so they have no before verdict; some of the 22 were retargeted at the new spelling of the line they mutate. No adversarial pass was run."
+      "notes": "One record for the whole pull request. At the named commit: green 82 baseline, mutation-probe over mutants.toml M01 to M33, 33/33 killed, 0 survived, 0 no-run, 0 harness errors. The before figures are the previous entry's: 22 mutants, all killed by the 63 tests on main. The other 11 mutants target settle, setPolicy and the shared leak, which do not exist on main, so they have no before verdict; some of the 22 were retargeted at the new spelling of the line they mutate. No adversarial pass was run."
     }
   }
 ]
