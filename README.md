@@ -78,11 +78,11 @@ unresolved import. Install both:
 
 ```
 forge soldeer install rain-lib-leakybucket~x.y.z
-forge soldeer install rain-math-float~0.2.4
+forge soldeer install rain-math-float~0.2.5
 ```
 
-`0.2.4` there is exact, not a floor. `src/lib/LibLeakyBucket.sol` imports
-`rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol` by that literal path, and
+`0.2.5` there is exact, not a floor. `src/lib/LibLeakyBucket.sol` imports
+`rain-math-float-0.2.5/src/lib/LibDecimalFloat.sol` by that literal path, and
 soldeer keys the remapping it generates on the installed directory name, so any
 other revision of `rain-math-float` is remapped under a different prefix and the
 import does not resolve.
@@ -97,7 +97,7 @@ so an untouched mapping entry is already a valid bucket that can mint nothing,
 and no initializer is needed.
 
 ```solidity
-import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.2.5/src/lib/LibDecimalFloat.sol";
 import {LibLeakyBucket, LeakyBucket} from "rain-lib-leakybucket-x.y.z/src/lib/LibLeakyBucket.sol";
 
 contract Token {
@@ -301,7 +301,7 @@ second, with a write on each of those seconds, is still exactly full after half
 an hour of it.
 
 Outside those bounds it holds to the precision of the level and no further. A
-`Float` subtraction keeps about 67 digits, and `rain.math.float` at `0.2.4` does
+`Float` subtraction keeps about 67 digits, and `rain.math.float` at `0.2.5` does
 not direct its rounding, so a leak below the last digit the level holds is not
 taken off as it is. `test/src/lib/FloatHazards.t.sol` pins both outcomes against
 a level of `1e40`, whose last digit is `1e-27`: a leak of `1e-29` takes a whole
@@ -328,7 +328,7 @@ visible. Round down, so the on chain rate is never faster than the policy.
 ### Arithmetic, and which way it fails
 
 Every operation is a `Float` operation from
-[`rain.math.float`](https://github.com/rainlanguage/rain.math.float) at `0.2.4`.
+[`rain.math.float`](https://github.com/rainlanguage/rain.math.float) at `0.2.5`.
 Eight distinct operations in the whole file: `add`, `sub`, `mul`, `max`, `lt`,
 `gt`, `isZero` and the `packLossless` that spells zero. There is no saturating
 math, no packing, no `unchecked` block, no assembly and no hand rolled overflow
@@ -474,7 +474,7 @@ in CI.
 
 Not yet audited. The intended scope is `src/`, which is one file, plus the one
 dependency it imports by path: `LibDecimalFloat` from `rain-math-float` at
-`0.2.4`. Every number in a bucket is a `Float` and every operation on one is
+`0.2.5`. Every number in a bucket is a `Float` and every operation on one is
 that library's, so a review of this library's arithmetic is a review of how it
 calls that one. Nothing in this repo, and nothing in the published
 `rain-math-float` package, records an audit of it — the Protofire audit of
