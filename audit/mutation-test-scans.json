@@ -520,5 +520,28 @@
       "filed": [],
       "notes": "mutation-probe over mutants.toml M01 to M33 at the named commit: green 83 baseline, 33/33 killed, 0 survived, 0 no-run, 0 harness errors. The new test is among the killers of M04 and M06. M27, M28 and M33 carry no test names because their failures' counterexamples contain brackets the fail-pattern stops at; each was re-run by hand under .mutation-test/check.sh with its compile proven: M27 80 passed 3 failed (testEntryPointsAnswerOnExactlyTheFillableDomain, testEntryPointsRejectANegativeCapacity, testEntryPointsRejectANegativeLeakRate), M28 78 passed 5 failed (testEntryPointsRejectANegativeCapacity, testEntryPointsRejectANegativeLeakRate, testSetCapacityRefusesANegativeCapacity, testSetPolicyRefusesANegativeCapacity, testSetPolicyRefusesANegativeLeakRate), M33 80 passed 3 failed (testEntryPointsRejectANegativeLevel, testEntryPointsRejectANegativeStoredTimestamp, testEntryPointsRejectANegativeTimestamp). No mutant changed. No adversarial pass was run."
     }
+  },
+  {
+    "timestamp": "2026-10-11T18:50:18Z",
+    "commit": "2ade3c12d77dc50338053bc5bec2da6eb7b509a7",
+    "testsAfterCommit": "2ade3c12d77dc50338053bc5bec2da6eb7b509a7",
+    "publishedTag": "sol-v0.5.0",
+    "commitsAheadOfTag": 1,
+    "scope": "src/lib/LibLeakyBucket.sol against rain-math-float 0.2.45 and forge-std 1.17.0; the suite is unchanged, the only change since the previous scan is the rain-math-float bump and the versioned import prefixes it moves.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 33,
+      "mutantsKilledByPreExistingSuite": 33,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 33,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 83,
+      "testsAfter": 83,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "mutation-probe over mutants.toml M01 to M33 at the named commit: green 83 baseline, 33/33 killed, 0 survived, 0 no-run, 0 harness errors. M27, M28 and M33 carry no test names because their failures' counterexamples contain brackets the fail-pattern stops at; each was re-run by hand under .mutation-test/check.sh with its compile proven: M27 80 passed 3 failed (testEntryPointsAnswerOnExactlyTheFillableDomain, testEntryPointsRejectANegativeCapacity, testEntryPointsRejectANegativeLeakRate), M28 78 passed 5 failed (testEntryPointsRejectANegativeCapacity, testEntryPointsRejectANegativeLeakRate, testSetCapacityRefusesANegativeCapacity, testSetPolicyRefusesANegativeCapacity, testSetPolicyRefusesANegativeLeakRate), M33 80 passed 3 failed (testEntryPointsRejectANegativeLevel, testEntryPointsRejectANegativeStoredTimestamp, testEntryPointsRejectANegativeTimestamp). No mutant changed. No adversarial pass was run."
+    }
   }
 ]

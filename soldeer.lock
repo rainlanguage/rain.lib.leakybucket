@@ -7,7 +7,7 @@ integrity = "fa706c8a7caf3426c90f75e6aafa3224b0a6c899b490800cf6944e4ec42f9344"
 
 [[dependencies]]
 name = "rain-math-float"
-version = "0.2.22"
-url = "https://soldeer-revisions.s3.amazonaws.com/rain-math-float/0_2_22_07-10-2026_16:03:59_rain.math.zip"
-checksum = "d582d8ad93587f3a1192f369ac9302df1991120b39e591a64bdd6a9b5dd47497"
-integrity = "890abd3dd075a428420b576c08ca4d3cc458e8c3d99579270a312bf8e9c36480"
+version = "0.2.45"
+url = "https://soldeer-revisions.s3.amazonaws.com/rain-math-float/0_2_45_11-10-2026_17:52:20_rain.math.zip"
+checksum = "a80ef5827834b68580c40570f14ec87c76525805c307bf5c15fd8f6d631e7128"
+integrity = "fb4ec397ac7c9d15d376766d19969912609ab3d49e49c2012e7b39b6b8f3ac1b"
