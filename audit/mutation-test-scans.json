@@ -474,5 +474,28 @@
       "filed": [],
       "notes": "mutation-probe over mutants.toml M01 to M33 at the named commit: green 82 baseline, 33/33 killed, 0 survived, 0 no-run, 0 harness errors. No test or mutant changed; the suite and the mutants are the previous entry's, run against the bumped dependencies. No adversarial pass was run."
     }
+  },
+  {
+    "timestamp": "2026-10-11T16:58:44Z",
+    "commit": "e772c127dded6286455862911cecd7da5c8e105a",
+    "testsAfterCommit": "e772c127dded6286455862911cecd7da5c8e105a",
+    "publishedTag": "sol-v0.4.4",
+    "commitsAheadOfTag": 3,
+    "scope": "src/lib/LibLeakyBucket.sol against rain-math-float 0.2.22 and forge-std 1.17.0; the only source change is the float import path.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 33,
+      "mutantsKilledByPreExistingSuite": 33,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 33,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 82,
+      "testsAfter": 82,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "mutation-probe over mutants.toml M01 to M33 at the named commit: green 82 baseline, 33/33 killed, 0 survived, 0 harness errors. The full pass scored 32 killed and M25 no-run (its suite output carried no tally line); M25 re-run alone with --only M25 on a green 82 baseline was killed. M33's kill carries no test names because its failures' counterexamples contain brackets the fail-pattern stops at; the tally shows 79 passed, 3 failed. No test or mutant changed; the suite and the mutants are the previous entry's, run against the bumped dependencies. No adversarial pass was run."
+    }
   }
 ]
