@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2020 Rain Open Source Software Ltd
 pragma solidity =0.8.25;
 
-import {Test} from "forge-std-1.16.2/src/Test.sol";
-import {Float, LibDecimalFloat} from "rain-math-float-0.2.4/src/lib/LibDecimalFloat.sol";
+import {Test} from "forge-std-1.17.0/src/Test.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.2.22/src/lib/LibDecimalFloat.sol";
 import {
     LibLeakyBucket,
     LeakyBucket,
@@ -87,6 +87,23 @@ contract FloatHazardsTest is Test {
         Float weirdZero = Float.wrap(bytes32(uint256(5) << 224));
         LeakyBucket memory bucket = bucketOf(f(0, 0), weirdZero);
         assertTrue(LibLeakyBucket.headroomAt(bucket, f(0, 0)).isZero());
+    }
+
+    /// A leak whose exact value sits on the exponent floor is charged in full.
+    ///
+    /// 0.1 seconds at 30e-2147483648 a second is a product of 30e-2147483649,
+    /// one step under the floor; its trailing zero is shed to land it exactly
+    /// at 3e-2147483648. The level of 5e-2147483648 leaks to exactly
+    /// 2e-2147483648. A leak that reverted, or underflowed to zero and left
+    /// the level at 5e-2147483648, or was charged as anything but 3, reads
+    /// differently.
+    function testALeakExactlyAtTheExponentFloorIsChargedInFull() external pure {
+        LeakyBucket memory bucket = LeakyBucket({
+            level: f(5, type(int32).min), timestamp: f(0, 0), capacity: f(1, 0), leakRate: f(30, type(int32).min)
+        });
+
+        Float levelNow = LibLeakyBucket.levelAt(bucket, f(1, -1));
+        assertTrue(levelNow.eq(f(2, type(int32).min)), "level after a leak at the floor");
     }
 
     /// `bucket` settled once a second for `count` seconds, each settle stored.
