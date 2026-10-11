@@ -99,10 +99,7 @@ contract FloatHazardsTest is Test {
     /// differently.
     function testALeakExactlyAtTheExponentFloorIsChargedInFull() external pure {
         LeakyBucket memory bucket = LeakyBucket({
-            level: f(5, type(int32).min),
-            timestamp: f(0, 0),
-            capacity: f(1, 0),
-            leakRate: f(30, type(int32).min)
+            level: f(5, type(int32).min), timestamp: f(0, 0), capacity: f(1, 0), leakRate: f(30, type(int32).min)
         });
 
         Float levelNow = LibLeakyBucket.levelAt(bucket, f(1, -1));
