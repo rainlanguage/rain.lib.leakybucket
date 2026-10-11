@@ -497,5 +497,28 @@
       "filed": [],
       "notes": "mutation-probe over mutants.toml M01 to M33 at the named commit: green 82 baseline, 33/33 killed, 0 survived, 0 harness errors. The full pass scored 32 killed and M25 no-run (its suite output carried no tally line); M25 re-run alone with --only M25 on a green 82 baseline was killed. M33's kill carries no test names because its failures' counterexamples contain brackets the fail-pattern stops at; the tally shows 79 passed, 3 failed. No test or mutant changed; the suite and the mutants are the previous entry's, run against the bumped dependencies. No adversarial pass was run."
     }
+  },
+  {
+    "timestamp": "2026-10-11T17:29:47Z",
+    "commit": "0620121b5e62b8d04987c40168e49600d98799f7",
+    "testsAfterCommit": "0620121b5e62b8d04987c40168e49600d98799f7",
+    "publishedTag": "sol-v0.4.4",
+    "commitsAheadOfTag": 6,
+    "scope": "src/lib/LibLeakyBucket.sol against rain-math-float 0.2.22 and forge-std 1.17.0; the suite gains testALeakExactlyAtTheExponentFloorIsChargedInFull, a leak whose product lands exactly on the int32.min exponent floor.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 33,
+      "mutantsKilledByPreExistingSuite": 33,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 33,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 82,
+      "testsAfter": 83,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "mutation-probe over mutants.toml M01 to M33 at the named commit: green 83 baseline, 33/33 killed, 0 survived, 0 no-run, 0 harness errors. The new test is among the killers of M04 and M06. M27, M28 and M33 carry no test names because their failures' counterexamples contain brackets the fail-pattern stops at; each was re-run by hand under .mutation-test/check.sh with its compile proven: M27 80 passed 3 failed (testEntryPointsAnswerOnExactlyTheFillableDomain, testEntryPointsRejectANegativeCapacity, testEntryPointsRejectANegativeLeakRate), M28 78 passed 5 failed (testEntryPointsRejectANegativeCapacity, testEntryPointsRejectANegativeLeakRate, testSetCapacityRefusesANegativeCapacity, testSetPolicyRefusesANegativeCapacity, testSetPolicyRefusesANegativeLeakRate), M33 80 passed 3 failed (testEntryPointsRejectANegativeLevel, testEntryPointsRejectANegativeStoredTimestamp, testEntryPointsRejectANegativeTimestamp). No mutant changed. No adversarial pass was run."
+    }
   }
 ]
