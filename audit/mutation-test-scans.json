@@ -17,13 +17,8 @@
       "confirmed": 2,
       "testsBefore": 53,
       "testsAfter": 54,
-      "coveragePRs": [
-        "#3"
-      ],
-      "filed": [
-        "#1",
-        "#2"
-      ],
+      "coveragePRs": ["#3"],
+      "filed": ["#1", "#2"],
       "notes": "Two rounds, looped until dry: 43 behaviours in round 1, then 6 more (error identities and the packed width constants) in round 2, which added no new gap. Round 2 ran after the round 1 coverage test landed on the branch, but every round 2 kill is credited to a pre-existing test by name, so attribution holds. Single survivor across both rounds was LibLeakyBucketCheckpoint.fillableAt, never exercised with a stored checkpoint differing from the queried clock; the one embedding test reaching it calls it in the same second as the mint, where the substitution is a no-op. Behaviour correct as written, so closed by strengthening testPackedReadsMatchCore in place plus a concrete-second case. Both adversarial findings are in the packed codec and neither is reachable through a monotonic block.timestamp: #1 is a write-path violation of the documented 'never hands out more headroom than reality' property (a timestamp behind the stored checkpoint regresses it; measured 501 units of headroom where 1 was earned, from a single zero-amount call), #2 is headroomAt/fillableAt disagreeing with fill when capacity exceeds LEAKY_BUCKET_LEVEL_MAX (fails closed, reverts on packing width rather than the documented capacity error). publishedTag is null: nothing is published yet, the next-v0.1.0 tag is an unconsumed version seed and the Soldeer project does not exist. testsAfterCommit is the coverage commit on branch mutation-test/leaky-bucket, pending merge of PR #3."
     }
   },
@@ -45,9 +40,7 @@
       "confirmed": 0,
       "testsBefore": 54,
       "testsAfter": 62,
-      "coveragePRs": [
-        "#4"
-      ],
+      "coveragePRs": ["#4"],
       "filed": [],
       "notes": "Fix pass rather than a discovery scan, so the two findings were already known and no new candidate was raised. All 49 prior mutants re-probed and still killed; M42/M43 retargeted to the new multi-line fill body. Ten new mutants cover the new behaviour and all are killed, including M50, which restores the exact defect filed as #1 (fill storing the raw clock) and is killed by testBackwardsClockBanksNoCredit and testFillBehindTheCheckpointGrantsNoHeadroom. Verified independently of the agent that produced the fix: full 59-mutant probe re-run against the committed tree, 59/59 killed, 0 survived, 0 no-run, 0 harness errors, on a green 62-test baseline. Known probe-config wart, not fixed here: the fail-pattern in mutants.toml does not name killers when the revert reason itself contains a bracket, which is why several checkCapacity mutants show KILLED with no named killer."
     }
@@ -254,12 +247,8 @@
       "confirmed": 2,
       "testsBefore": 58,
       "testsAfter": 58,
-      "coveragePRs": [
-        "#116"
-      ],
-      "filed": [
-        "#117"
-      ],
+      "coveragePRs": ["#116"],
+      "filed": ["#117"],
       "notes": "Scan of a port, not of a published tree: the whole library changed in this branch, so the pre-existing suite being probed is the ported suite at fb4a0cc rather than anything released. Single survivor was M16, checkFillableDomain dropped from levelAt: that function was exported in this branch and the two domain tests were never extended to it, so an export shipped with its guard untested, while the same mutation in headroomAt (M15) and fill (M17) was killed. Closed by extending testEntryPointsRejectANegativeCapacity and testEntryPointsRejectANegativeLeakRate in place, so testsAfter is unchanged at 58. Two adversarial findings, both confirmed, both from asking whether a test's own assertion was weaker than the property it named. The first was fixed in this branch and not filed: LeakyBucketMintCap.level derived the level as capacity minus headroom, and the headroom clamps at zero exactly when the level is above the capacity, so after a governance capacity cut it reported the new capacity (360) instead of what was owed (1800); fixed by exporting LibLeakyBucket.levelAt and asserting it in testCapacityCutBindsImmediately, which fails 360 != 180 against the old derivation. The second is filed as #117 and NOT fixed: fill accepts an amount about 68 decimal orders below the level and credits nothing, because Float carries ~67 exact digits and the amount falls off the coefficient's tail. Boundary located exactly at a level of 1e40 with an amount of 1e-28; gaps of 67 and below credit exactly. The fixed point version could not express this, since one shared scale meant an accepted amount was always credited. FloatHazards.t.sol keeps the weaker word-inequality assertion with #117 named against it, because the strong assertion fails and a test asserting the current behaviour would enshrine the bug. Probe integrity: green 58 baseline before every pass, byte-exact restore verified, 0 no-run, 0 harness errors, suite run with forge test --force so no verdict was scored against a stale artifact."
     }
   },
@@ -281,14 +270,11 @@
       "confirmed": 0,
       "testsBefore": 58,
       "testsAfter": 58,
-      "coveragePRs": [
-        "#116"
-      ],
+      "coveragePRs": ["#116"],
       "filed": [],
       "notes": "Clean pass: 18/18 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. The new guard in fill is killed by testAnAmountTooSmallToRecordIsRefused, which pins both sides of the boundary at a level of 1e40 — 1e-27 credited, 1e-28 refused by name. testsAfter is unchanged at 58 because testATinyFillIsNeverSilentlySwallowed was rewritten into testAnAmountTooSmallToRecordIsRefused rather than added alongside, and testFillsAcrossExponentGapsEitherLandOrRevert renamed to EitherRaiseOrRevert now that the strong assertion holds. First attempt at this pass reported a harness error, not a survivor: the #117 fix replaced the line M13 targeted with a named local, so the mutant stopped matching. The probe refused to score it rather than reading the miss as a kill, which is the exactly-once check doing its job; M13 retargeted at the new line and the pass re-run."
     }
-  }
-,
+  },
   {
     "timestamp": "2026-09-30T11:05:00Z",
     "commit": "9f55563540b37bfe8852b59b96e72f6089f10b7f",
@@ -307,9 +293,7 @@
       "confirmed": 0,
       "testsBefore": 58,
       "testsAfter": 58,
-      "coveragePRs": [
-        "#116"
-      ],
+      "coveragePRs": ["#116"],
       "filed": [],
       "notes": "Clean pass: 19/19 killed, 0 survived, 0 no-run, 0 harness errors, on a green 58 baseline. No test changed; the count rose from 18 to 19 because centralising the subtraction into saturatingSub split the old M01 into two behaviours of the helper, min-vs-max and add-vs-sub, where before the max() call and the sub() it wrapped sat on separate lines per call site. The six mutants that named atLeastZero were retargeted at the saturatingSub spelling and the tail renumbered M09 through M19. Both mutations that remove the saturation at a single call site are still expressible and still killed: M05 drops it from elapsed and M08 from the headroom. The rename is behaviour-preserving, which is what 19/19 against an untouched suite says: the same tests that killed the atLeastZero mutants kill the saturatingSub ones, and no verdict moved. Probe integrity: green 58 baseline before the pass, byte-exact restore verified by the tool, suite run with forge test --force so no verdict was scored against a stale artifact. An earlier attempt at this pass was killed by hand partway through, roughly eight minutes in, because the saturatingSub rename was still pending and would have rewritten six of the target lines it was scoring; the working tree was restored from the commit and the pass re-run whole."
     }
