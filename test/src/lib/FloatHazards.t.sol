@@ -3,7 +3,7 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.17.0/src/Test.sol";
-import {Float, LibDecimalFloat} from "rain-math-float-0.2.45/src/lib/LibDecimalFloat.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.3.10/src/lib/LibDecimalFloat.sol";
 import {
     LibLeakyBucket,
     LeakyBucket,
@@ -114,37 +114,25 @@ contract FloatHazardsTest is Test {
         return bucket;
     }
 
-    /// A leak below the last digit the level holds is not subtracted as it is,
-    /// and a settle advances the checkpoint over it, so settling is visible to
-    /// a later read there, in both directions. A level of 1e40 holds digits
-    /// down to 1e-27.
-    function testASettleBelowTheLastDigitOfTheLevelShowsInLaterReads() external pure {
+    /// A leak below the last digit the level holds rounds the level toward zero
+    /// by one whole digit, however far below it the leak is, and a settle
+    /// advances the checkpoint over it, so ten settles take ten digits where
+    /// the unsettled read takes one. A level of 1e40 holds digits down to 1e-27.
+    function testASettleBelowTheLastDigitOfTheLevelShowsInLaterReads(uint8 depth) external pure {
+        int256 rateExponent = -28 - int256(uint256(bound(depth, 0, 52)));
         Float level = f(1, 40);
         Float oneDigitDown = f(9999999999999999999999999999999999999999999999999999999999999999999, -27);
         Float tenDigitsDown = f(9999999999999999999999999999999999999999999999999999999999999999990, -27);
 
-        // 1e-29 a second: each settle takes a whole 1e-27, so ten of them leak
-        // ten times what the unsettled bucket does over the same ten seconds.
-        LeakyBucket memory rounded =
-            LeakyBucket({level: level, timestamp: f(0, 0), capacity: f(1, 60), leakRate: f(1, -29)});
-        assertTrue(LibLeakyBucket.levelAt(rounded, f(1, 0)).eq(oneDigitDown), "one second, read");
-        assertTrue(LibLeakyBucket.levelAt(rounded, f(10, 0)).eq(oneDigitDown), "ten seconds, read");
-        LeakyBucket memory roundedSettled = settledEachSecond(rounded, 10);
-        assertTrue(roundedSettled.timestamp.eq(f(10, 0)), "checkpoint");
-        assertTrue(roundedSettled.level.eq(tenDigitsDown), "ten seconds, settled each second");
-
-        // 1e-37 a second: each settle takes nothing and still advances the
-        // checkpoint, so ten of them leak nothing where the unsettled bucket
-        // reads a digit down.
-        LeakyBucket memory dropped =
-            LeakyBucket({level: level, timestamp: f(0, 0), capacity: f(1, 60), leakRate: f(1, -37)});
-        (Float settled, Float settledAt) = LibLeakyBucket.settle(dropped, f(1, 0));
-        assertTrue(settled.eq(level), "one second, settled");
+        LeakyBucket memory bucket =
+            LeakyBucket({level: level, timestamp: f(0, 0), capacity: f(1, 60), leakRate: f(1, rateExponent)});
+        (Float settled, Float settledAt) = LibLeakyBucket.settle(bucket, f(1, 0));
+        assertTrue(settled.eq(oneDigitDown), "one second, settled");
         assertTrue(settledAt.eq(f(1, 0)), "one second, checkpoint");
-        assertTrue(LibLeakyBucket.levelAt(dropped, f(10, 0)).eq(oneDigitDown), "ten seconds, read");
-        LeakyBucket memory droppedSettled = settledEachSecond(dropped, 10);
-        assertTrue(droppedSettled.timestamp.eq(f(10, 0)), "checkpoint");
-        assertTrue(droppedSettled.level.eq(level), "ten seconds, settled each second");
+        assertTrue(LibLeakyBucket.levelAt(bucket, f(10, 0)).eq(oneDigitDown), "ten seconds, read");
+        LeakyBucket memory settledEach = settledEachSecond(bucket, 10);
+        assertTrue(settledEach.timestamp.eq(f(10, 0)), "checkpoint");
+        assertTrue(settledEach.level.eq(tenDigitsDown), "ten seconds, settled each second");
     }
 
     function fillExternal(LeakyBucket memory bucket, Float timestamp, Float amount)
