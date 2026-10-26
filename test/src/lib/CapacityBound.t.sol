@@ -3,7 +3,7 @@
 pragma solidity =0.8.25;
 
 import {Test} from "forge-std-1.17.0/src/Test.sol";
-import {Float, LibDecimalFloat} from "rain-math-float-0.3.10/src/lib/LibDecimalFloat.sol";
+import {Float, LibDecimalFloat} from "rain-math-float-0.3.11/src/lib/LibDecimalFloat.sol";
 import {LeakyBucketCapacityExceeded} from "../../../src/lib/LibLeakyBucket.sol";
 import {workedCapacity, workedLeakRate, workedDrain, capacityOver} from "../../lib/WorkedPolicy.sol";
 import {LeakyBucketAsserts} from "../../abstract/LeakyBucketAsserts.sol";
