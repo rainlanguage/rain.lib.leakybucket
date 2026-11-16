@@ -10,7 +10,7 @@ command = ["bash", ".mutation-test/check.sh"]
 # forge's own tally. `--force` in the wrapper means the mutated source is always
 # recompiled, so a verdict is never scored against a stale artifact.
 proof = '(\d+) tests passed, (\d+) failed'
-fail-pattern = '\[FAIL[^\]]*\] (\S+)'
+fail-pattern = '\[FAIL.*\] (\S+)'
 timeout-secs = 1800
 
 # --- the saturating sub itself, which is what the old `LibSaturatingMath` call
