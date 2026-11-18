@@ -596,5 +596,28 @@
       "filed": [],
       "notes": "mutation-probe over mutants.toml M01 to M33 at the named commit, full suite with no filter: green 83 baseline, 33/33 killed, 0 survived, 0 no-run, 0 harness errors; every mutant names at least four failing tests. mutants.toml's fail-pattern is now the greedy '\\[FAIL.*\\] (\\S+)', so M27, M28 and M33 carry test names for the first time. No mutant changed. The adversarial pass at pr:133 scope covered the dependency diff only and found no candidate."
     }
+  },
+  {
+    "timestamp": "2026-11-18T12:01:49Z",
+    "commit": "663d491f300bc4b283cef9804d5ca74bb5a9a06e",
+    "testsAfterCommit": "663d491f300bc4b283cef9804d5ca74bb5a9a06e",
+    "publishedTag": "sol-v0.5.4",
+    "commitsAheadOfTag": 2,
+    "scope": "pr:134, src/lib/LibLeakyBucket.sol against rain-math-float 0.3.13 and forge-std 1.17.0; the rain-math-float bump moves the versioned import prefixes only. Between 0.3.12 and 0.3.13 the only changed source file is LibParseDecimalFloat.sol, whose rain-string import prefixes move from 0.3.10 to 0.3.11; LibDecimalFloat and its implementation are unchanged and do not import the parse library, so no function this library calls changed.",
+    "tool": "adversarial-mutation-test",
+    "skillVersion": "0.35.0",
+    "summary": {
+      "behaviours": 33,
+      "mutantsKilledByPreExistingSuite": 33,
+      "mutantsSurvivedPreExistingSuite": 0,
+      "mutantsKilledAfter": 33,
+      "candidates": 0,
+      "confirmed": 0,
+      "testsBefore": 83,
+      "testsAfter": 83,
+      "coveragePRs": [],
+      "filed": [],
+      "notes": "mutation-probe over mutants.toml M01 to M33 at the named commit, full suite with no filter: green 83 baseline, 33/33 killed, 0 survived, 0 no-run, 0 harness errors; every mutant names at least two distinct failing tests. No mutant changed. The adversarial pass at pr:134 scope covered the dependency diff only and found no candidate: src/ and test/ change only their rain-math-float import prefixes."
+    }
   }
 ]
